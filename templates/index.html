@@ -903,8 +903,7 @@
         <div id="beliefs-container">
           <div class="empty-state">
             Press <b>Start</b> to begin the learning loop.<br>
-            The simulation will run and hypotheses will form<br>
-            after ~30 seconds (5 observations needed).
+            Hypotheses will appear here as the agent observes the simulation.
           </div>
         </div>
       </div>
@@ -1100,8 +1099,7 @@
       document.getElementById('timeline-empty').style.display = '';
       document.getElementById('beliefs-container').innerHTML = `<div class="empty-state">
         Press <b>Start</b> to begin the learning loop.<br>
-        The simulation will run and hypotheses will form<br>
-        after ~30 seconds (5 observations needed).
+        Hypotheses will appear here as the agent observes the simulation.
       </div>`;
     }
 
@@ -1372,31 +1370,31 @@
     let simulation = null;
     let svgRoot = null;
 
+    function ensureArrowMarkers(predicates) {
+      const defs = svgRoot.select('defs.arrow-defs');
+      predicates.forEach(pred => {
+        if (defs.select(`#arrow-${pred}`).empty()) {
+          const color = nodeColor(pred);
+          defs.append('marker')
+            .attr('id', `arrow-${pred}`)
+            .attr('viewBox', '0 -4 8 8').attr('refX', 22)
+            .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
+            .append('path').attr('d', 'M0,-4L8,0L0,4').attr('fill', color);
+          defs.append('marker')
+            .attr('id', `arrow-dim-${pred}`)
+            .attr('viewBox', '0 -4 8 8').attr('refX', 22)
+            .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
+            .append('path').attr('d', 'M0,-4L8,0L0,4').attr('fill', color).attr('opacity', 0.2);
+        }
+      });
+    }
+
     function initBBN() {
       const svg = d3.select('#bbn-svg');
       svgRoot = svg;
 
       // Arrowhead markers — created lazily per discovered predicate
       svg.append('defs').attr('class', 'arrow-defs');
-
-      function ensureArrowMarkers(predicates) {
-        const defs = svgRoot.select('defs.arrow-defs');
-        predicates.forEach(pred => {
-          if (defs.select(`#arrow-${pred}`).empty()) {
-            const color = nodeColor(pred);
-            defs.append('marker')
-              .attr('id', `arrow-${pred}`)
-              .attr('viewBox', '0 -4 8 8').attr('refX', 22)
-              .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
-              .append('path').attr('d', 'M0,-4L8,0L0,4').attr('fill', color);
-            defs.append('marker')
-              .attr('id', `arrow-dim-${pred}`)
-              .attr('viewBox', '0 -4 8 8').attr('refX', 22)
-              .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
-              .append('path').attr('d', 'M0,-4L8,0L0,4').attr('fill', color).attr('opacity', 0.2);
-          }
-        });
-      }
 
       // Layers
       svg.append('g').attr('class', 'links-layer');
@@ -1921,7 +1919,7 @@
         b.history.forEach(s => { if (s.iteration > maxIter) maxIter = s.iteration; });
       });
 
-      const xScale = d3.scaleLinear().domain([1, Math.max(maxIter, 2)]).range([0, iw]);
+      const xScale = d3.scaleLinear().domain([0, Math.max(maxIter, 2)]).range([0, iw]);
       const yScale = d3.scaleLinear().domain([0, 1]).range([ih, 0]);
 
       // Axes
