@@ -11,4 +11,4 @@ RUN uv sync --no-dev --frozen --no-cache
 # Copy source
 COPY . .
 
-CMD ["sh", "-c", "uv run uvicorn main:app --host 0.0.0.0 --port ${PORT:-8001}"]
+CMD uv run uvicorn main:app --host 0.0.0.0 --port $PORT
