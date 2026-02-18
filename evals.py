@@ -40,7 +40,7 @@ def format_beliefs_for_eval(world_state: WorldState) -> str:
         lines.append(
             f"- [{b.status.upper()}] {b.hypothesis.description} "
             f"({b.hypothesis.subject} {b.hypothesis.predicate} {b.hypothesis.object_}) "
-            f"| confidence: {b.posterior:.0%} | evidence: {b.evidence_count} observations"
+            f"| confidence: {b.posterior:.0%} | observations: {b.observation_count}"
         )
     return "\n".join(lines)
 

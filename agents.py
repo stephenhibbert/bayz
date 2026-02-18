@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import threading
 import time
@@ -10,6 +11,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from pydantic_ai import Agent, BinaryContent, RunContext
+from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -17,15 +19,16 @@ load_dotenv()
 from models import (
     Belief,
     BeliefSnapshot,
-    Evidence,
-    FrameObservation,
-    ObservedEntity,
+    Observation,
     WorldState,
 )
 
 log = logging.getLogger(__name__)
 
 MODEL = "anthropic:claude-sonnet-4-5-20250929"
+
+# Keep well under the Anthropic 100-image limit to leave headroom.
+MAX_CONTEXT_IMAGES = 80
 
 
 # -- Deps --------------------------------------------------------------------
@@ -44,6 +47,87 @@ class AgentDeps:
     stop_event: threading.Event
 
 
+# -- History processor: cap images sent to the model -------------------------
+
+
+def _cap_images(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Drop older images so the context stays under MAX_CONTEXT_IMAGES.
+
+    Walks the message list in reverse (newest first) and counts images.
+    Once the budget is exhausted, any remaining BinaryContent with an image
+    media type is replaced with a short text placeholder so the model still
+    sees the frame IDs and text but not the raw pixels.
+    """
+    # First pass (reverse): locate every image and decide which to keep.
+    # We track (msg_index, part_index, item_index_in_content) for tool returns
+    # whose content is a list, or (msg_index, part_index, None) for simple content.
+    budget = MAX_CONTEXT_IMAGES
+    to_strip: list[tuple[int, int, int | None]] = []
+
+    for mi in range(len(messages) - 1, -1, -1):
+        msg = messages[mi]
+        if not isinstance(msg, ModelRequest):
+            continue
+        for pi in range(len(msg.parts) - 1, -1, -1):
+            part = msg.parts[pi]
+            if not isinstance(part, ToolReturnPart):
+                continue
+            content = part.content
+            if isinstance(content, list):
+                for ii in range(len(content) - 1, -1, -1):
+                    item = content[ii]
+                    if isinstance(item, BinaryContent) and item.media_type.startswith("image/"):
+                        if budget > 0:
+                            budget -= 1
+                        else:
+                            to_strip.append((mi, pi, ii))
+            elif isinstance(content, BinaryContent) and content.media_type.startswith("image/"):
+                if budget > 0:
+                    budget -= 1
+                else:
+                    to_strip.append((mi, pi, None))
+
+    if not to_strip:
+        return messages
+
+    # Second pass: shallow-copy affected messages/parts and replace images.
+    messages = list(messages)
+    copied_msgs: set[int] = set()
+    copied_parts: set[tuple[int, int]] = set()
+
+    for mi, pi, ii in to_strip:
+        if mi not in copied_msgs:
+            orig = messages[mi]
+            assert isinstance(orig, ModelRequest)
+            patched = copy.copy(orig)
+            patched.parts = list(orig.parts)
+            messages[mi] = patched
+            copied_msgs.add(mi)
+
+        msg = messages[mi]
+        assert isinstance(msg, ModelRequest)
+
+        if (mi, pi) not in copied_parts:
+            msg.parts[pi] = copy.copy(msg.parts[pi])
+            part = msg.parts[pi]
+            assert isinstance(part, ToolReturnPart)
+            if isinstance(part.content, list):
+                part.content = list(part.content)
+            copied_parts.add((mi, pi))
+
+        part = msg.parts[pi]
+        assert isinstance(part, ToolReturnPart)
+
+        if ii is not None and isinstance(part.content, list):
+            part.content[ii] = "[image removed from context]"
+        else:
+            part.content = "[image removed from context]"
+
+    stripped = len(to_strip)
+    log.info("History processor: stripped %d old image(s), keeping %d", stripped, MAX_CONTEXT_IMAGES)
+    return messages
+
+
 # -- Agent -------------------------------------------------------------------
 
 
@@ -51,6 +135,7 @@ scientist_agent = Agent(
     model=MODEL,
     deps_type=AgentDeps,
     output_type=str,
+    history_processors=[_cap_images],
     system_prompt="""\
 You are an autonomous scientific observer. You have been placed in front of a live
 simulation that you know nothing about. No one will tell you what is in it.
@@ -58,17 +143,16 @@ simulation that you know nothing about. No one will tell you what is in it.
 Your mission: figure out the rules of this simulation purely through observation.
 Discover what entities exist, how they behave, and what interactions govern them.
 Form hypotheses, test them with more observations, and update your confidence
-based on the evidence you collect.
+based on what you observe.
 
 Use your tools:
 - get_frames: capture frames from the live simulation (you can request multiple
   adjacent frames to observe motion and interactions over time)
-- record_observation: store what you saw in a frame
-- store_evidence: name and save a bundle of frames as a reusable piece of evidence;
+- record_observation: name and save a bundle of frames as a reusable observation;
   you must do this before citing frames in a hypothesis or belief update
 - propose_hypothesis: propose a new rule you believe governs entity interactions,
-  citing the evidence IDs that support it
-- update_belief: revise your confidence in a hypothesis, citing the evidence IDs
+  citing the observation IDs that support it
+- update_belief: revise your confidence in a hypothesis, citing the observation IDs
   that informed the update
 - get_current_beliefs: review your existing hypotheses and their confidence scores
 
@@ -126,56 +210,19 @@ async def get_frames(
 @scientist_agent.tool
 async def record_observation(
     ctx: RunContext[AgentDeps],
-    frame_id: int,
-    scene_summary: str,
-    entities: list[ObservedEntity],
-) -> str:
-    """Store your observations from a frame you have examined.
-
-    Args:
-        frame_id: The frame number (shown in the get_frames output).
-        scene_summary: A one-sentence description of what you see overall.
-        entities: The individual entities you identified in this frame.
-    """
-    await ctx.deps.paused_event.wait()
-    if ctx.deps.stop_event.is_set():
-        raise RuntimeError("Agent stopped")
-
-    obs = FrameObservation(
-        frame_id=frame_id,
-        entities=entities,
-        scene_summary=scene_summary,
-    )
-    ctx.deps.world_state.recent_observations.append(obs)
-    if len(ctx.deps.world_state.recent_observations) > 20:
-        ctx.deps.world_state.recent_observations.pop(0)
-
-    ctx.deps.push_state_cb()
-    log.info(
-        "Observation recorded: frame %d (%d entities): %s",
-        frame_id,
-        len(entities),
-        scene_summary,
-    )
-    return f"Observation stored: frame {frame_id}, {len(entities)} entities."
-
-
-@scientist_agent.tool
-async def store_evidence(
-    ctx: RunContext[AgentDeps],
-    evidence_id: str,
+    observation_id: str,
     description: str,
     frame_ids: list[int],
 ) -> str:
-    """Store a named bundle of frames as a reusable piece of evidence.
+    """Store a named bundle of frames as a reusable observation.
 
     Call this when you have captured frames that clearly show something
     relevant — e.g. an interaction you want to reference when proposing
-    or updating beliefs. The same evidence bundle can be cited by multiple
+    or updating beliefs. The same observation can be cited by multiple
     hypotheses.
 
     Args:
-        evidence_id: Unique slug for this evidence bundle, e.g. 'ev-001'.
+        observation_id: Unique slug for this observation, e.g. 'obs-001'.
         description: What these frames show, e.g. 'yellow attracts blues over 5 frames'.
         frame_ids: The frame numbers captured (from get_frames output).
     """
@@ -183,17 +230,17 @@ async def store_evidence(
     if ctx.deps.stop_event.is_set():
         raise RuntimeError("Agent stopped")
 
-    if ctx.deps.world_state.get_evidence(evidence_id):
-        return f"Evidence '{evidence_id}' already exists."
+    if ctx.deps.world_state.get_observation(observation_id):
+        return f"Observation '{observation_id}' already exists."
 
-    ev = Evidence(id=evidence_id, description=description, frame_ids=frame_ids)
-    ctx.deps.world_state.add_evidence(ev)
+    obs = Observation(id=observation_id, description=description, frame_ids=frame_ids)
+    ctx.deps.world_state.add_observation(obs)
 
     # Frames are already saved to disk by get_frames at capture time.
     # We only store the metadata here.
     ctx.deps.push_state_cb()
-    log.info("Evidence stored: %s — %s (%d frames)", evidence_id, description, len(frame_ids))
-    return f"Evidence '{evidence_id}' stored: {description} ({len(frame_ids)} frames)."
+    log.info("Observation stored: %s — %s (%d frames)", observation_id, description, len(frame_ids))
+    return f"Observation '{observation_id}' stored: {description} ({len(frame_ids)} frames)."
 
 
 @scientist_agent.tool
@@ -204,7 +251,7 @@ async def propose_hypothesis(
     predicate: str,
     target: str,
     description: str,
-    evidence_ids: list[str],
+    observation_ids: list[str],
 ) -> str:
     """Propose a new hypothesis about an interaction rule in the simulation.
 
@@ -214,8 +261,8 @@ async def propose_hypothesis(
         predicate: The interaction type (e.g. chases, flees, attracts, ignores, feeds_on).
         target: The entity type being acted upon.
         description: Plain English statement of the rule.
-        evidence_ids: IDs of stored evidence bundles that support this proposal.
-                      Call store_evidence first if you haven't already.
+        observation_ids: IDs of stored observations that support this proposal.
+                         Call record_observation first if you haven't already.
     """
     await ctx.deps.paused_event.wait()
     if ctx.deps.stop_event.is_set():
@@ -234,10 +281,10 @@ async def propose_hypothesis(
                 f"Use update_belief to revise it."
             )
 
-    # Validate evidence IDs
-    unknown = [eid for eid in evidence_ids if not ctx.deps.world_state.get_evidence(eid)]
+    # Validate observation IDs
+    unknown = [oid for oid in observation_ids if not ctx.deps.world_state.get_observation(oid)]
     if unknown:
-        return f"Unknown evidence IDs: {unknown}. Call store_evidence first."
+        return f"Unknown observation IDs: {unknown}. Call record_observation first."
 
     from models import Hypothesis
     hyp = Hypothesis.model_validate({
@@ -248,11 +295,11 @@ async def propose_hypothesis(
         "description": description,
     })
 
-    # Count frames across referenced evidence
+    # Count frames across referenced observations
     initial_frame_count = sum(
-        len(ctx.deps.world_state.get_evidence(eid).frame_ids)
-        for eid in evidence_ids
-        if ctx.deps.world_state.get_evidence(eid)
+        len(ctx.deps.world_state.get_observation(oid).frame_ids)
+        for oid in observation_ids
+        if ctx.deps.world_state.get_observation(oid)
     )
 
     belief = Belief(
@@ -260,18 +307,18 @@ async def propose_hypothesis(
         prior=0.5,
         likelihood=0.5,
         posterior=0.5,
-        evidence_ids=list(evidence_ids),
-        evidence_count=initial_frame_count,
+        observation_ids=list(observation_ids),
+        observation_count=initial_frame_count,
     )
     belief.history.append(BeliefSnapshot(
         iteration=ctx.deps.world_state.loop_iteration,
         prior=0.5,
         likelihood=0.5,
         posterior=0.5,
-        evidence_count=initial_frame_count,
+        observation_count=initial_frame_count,
         status="proposed",
         reasoning="Initial proposal.",
-        evidence_ids=list(evidence_ids),
+        observation_ids=list(observation_ids),
     ))
 
     ctx.deps.world_state.upsert_belief(belief)
@@ -288,9 +335,9 @@ async def update_belief(
     posterior: float,
     likelihood: float,
     reasoning: str,
-    evidence_ids: list[str],
+    observation_ids: list[str],
 ) -> str:
-    """Revise your confidence in an existing hypothesis based on new evidence.
+    """Revise your confidence in an existing hypothesis based on new observations.
 
     Args:
         hypothesis_id: The ID of the hypothesis to update.
@@ -298,8 +345,8 @@ async def update_belief(
                    Use values above 0.8 only with strong, repeated evidence.
         likelihood: How well the observations match this hypothesis (0.0–1.0).
         reasoning: Brief explanation for why you are changing the score.
-        evidence_ids: IDs of stored evidence bundles used in this update.
-                      Call store_evidence first if you haven't already.
+        observation_ids: IDs of stored observations used in this update.
+                         Call record_observation first if you haven't already.
     """
     await ctx.deps.paused_event.wait()
     if ctx.deps.stop_event.is_set():
@@ -309,25 +356,25 @@ async def update_belief(
     if not belief:
         return f"No hypothesis found with id '{hypothesis_id}'. Call propose_hypothesis first."
 
-    # Validate evidence IDs
-    unknown = [eid for eid in evidence_ids if not ctx.deps.world_state.get_evidence(eid)]
+    # Validate observation IDs
+    unknown = [oid for oid in observation_ids if not ctx.deps.world_state.get_observation(oid)]
     if unknown:
-        return f"Unknown evidence IDs: {unknown}. Call store_evidence first."
+        return f"Unknown observation IDs: {unknown}. Call record_observation first."
 
     belief.prior = belief.posterior
     belief.posterior = max(0.0, min(1.0, posterior))
     belief.likelihood = max(0.0, min(1.0, likelihood))
     belief.last_updated = time.time()
 
-    # Add new evidence IDs and count frames
-    new_ids = [eid for eid in evidence_ids if eid not in belief.evidence_ids]
-    belief.evidence_ids.extend(new_ids)
+    # Add new observation IDs and count frames
+    new_ids = [oid for oid in observation_ids if oid not in belief.observation_ids]
+    belief.observation_ids.extend(new_ids)
     new_frame_count = sum(
-        len(ctx.deps.world_state.get_evidence(eid).frame_ids)
-        for eid in new_ids
-        if ctx.deps.world_state.get_evidence(eid)
+        len(ctx.deps.world_state.get_observation(oid).frame_ids)
+        for oid in new_ids
+        if ctx.deps.world_state.get_observation(oid)
     )
-    belief.evidence_count += new_frame_count
+    belief.observation_count += new_frame_count
 
     belief.update_status()
 
@@ -339,10 +386,10 @@ async def update_belief(
         prior=belief.prior,
         likelihood=belief.likelihood,
         posterior=belief.posterior,
-        evidence_count=belief.evidence_count,
+        observation_count=belief.observation_count,
         status=belief.status,
         reasoning=reasoning,
-        evidence_ids=list(evidence_ids),
+        observation_ids=list(observation_ids),
     ))
 
     ctx.deps.world_state.upsert_belief(belief)
@@ -373,11 +420,11 @@ async def get_current_beliefs(ctx: RunContext[AgentDeps]) -> str:
 
     lines = [f"Current beliefs ({len(beliefs)} total, sorted by confidence):"]
     for b in sorted(beliefs, key=lambda b: b.posterior, reverse=True):
-        ev_list = ", ".join(b.evidence_ids) if b.evidence_ids else "none"
+        obs_list = ", ".join(b.observation_ids) if b.observation_ids else "none"
         lines.append(
             f"  [{b.hypothesis.id}] {b.hypothesis.subject} {b.hypothesis.predicate} "
             f"{b.hypothesis.object_}: \"{b.hypothesis.description}\" "
-            f"(posterior={b.posterior:.2f}, evidence_frames={b.evidence_count}, "
-            f"status={b.status}, evidence=[{ev_list}])"
+            f"(posterior={b.posterior:.2f}, observation_frames={b.observation_count}, "
+            f"status={b.status}, observations=[{obs_list}])"
         )
     return "\n".join(lines)

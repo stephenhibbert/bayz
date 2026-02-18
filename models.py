@@ -3,43 +3,16 @@ from __future__ import annotations
 import time
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
-# -- What the Observer sees in a single frame ----------------------------------
+# -- Named observation bundles -------------------------------------------------
 
 
-class ObservedEntity(BaseModel):
-    """A single entity identified by the vision agent in one frame."""
+class Observation(BaseModel):
+    """A named bundle of frames captured by the agent."""
 
-    label: str = Field(description="Short descriptive label, e.g. 'cyan dot', 'red fast mover'")
-    kind_guess: str = Field(
-        description="Your inferred label for this entity type based solely on what you observe"
-    )
-    x_pct: float = Field(ge=0.0, le=1.0, description="Horizontal position as fraction of frame width")
-    y_pct: float = Field(ge=0.0, le=1.0, description="Vertical position as fraction of frame height")
-    motion: Literal["stationary", "slow", "fast", "erratic"] = "slow"
-    notes: str = Field(default="", description="Any observed behavior or anomaly")
-
-
-class FrameObservation(BaseModel):
-    """All entities seen in one captured frame."""
-
-    frame_id: int = 0
-    timestamp: float = Field(default_factory=time.time)
-    entities: list[ObservedEntity] = Field(default_factory=list)
-    scene_summary: str = Field(
-        default="", description="One-sentence description of the overall scene state"
-    )
-
-
-# -- Named evidence bundles ----------------------------------------------------
-
-
-class Evidence(BaseModel):
-    """A named, reusable bundle of frames collected as evidence for/against hypotheses."""
-
-    id: str = Field(description="Unique slug identifying this evidence, e.g. 'ev-001'")
+    id: str = Field(description="Unique slug identifying this observation, e.g. 'obs-001'")
     description: str = Field(description="What was observed across these frames")
     frame_ids: list[int] = Field(default_factory=list, description="Frame IDs captured in this bundle")
     timestamp: float = Field(default_factory=time.time)
@@ -72,10 +45,20 @@ class BeliefSnapshot(BaseModel):
     prior: float
     likelihood: float
     posterior: float
-    evidence_count: int
+    observation_count: int
     status: str
     reasoning: str = ""
-    evidence_ids: list[str] = Field(default_factory=list, description="Evidence used in this update")
+    observation_ids: list[str] = Field(default_factory=list, description="Observations used in this update")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy(cls, data: dict) -> dict:
+        if isinstance(data, dict):
+            if "evidence_count" in data and "observation_count" not in data:
+                data["observation_count"] = data.pop("evidence_count")
+            if "evidence_ids" in data and "observation_ids" not in data:
+                data["observation_ids"] = data.pop("evidence_ids")
+        return data
 
 
 class Belief(BaseModel):
@@ -84,13 +67,13 @@ class Belief(BaseModel):
     hypothesis: Hypothesis
     prior: float = Field(default=0.5, ge=0.0, le=1.0)
     likelihood: float = Field(
-        default=0.5, ge=0.0, le=1.0, description="P(evidence | hypothesis true)"
+        default=0.5, ge=0.0, le=1.0, description="P(observations | hypothesis true)"
     )
     posterior: float = Field(default=0.5, ge=0.0, le=1.0, description="Updated belief score")
-    evidence_count: int = 0
-    evidence_ids: list[str] = Field(
+    observation_count: int = 0
+    observation_ids: list[str] = Field(
         default_factory=list,
-        description="IDs of Evidence bundles that have contributed to this belief",
+        description="IDs of Observation bundles that have contributed to this belief",
     )
     status: Literal["proposed", "strengthening", "confident", "refuted"] = "proposed"
     last_updated: float = Field(default_factory=time.time)
@@ -98,7 +81,7 @@ class Belief(BaseModel):
     origin_reasoning: str = Field(default="", description="Why the hypothesis agent proposed this")
 
     def update_status(self) -> None:
-        if self.posterior >= 0.85 and self.evidence_count >= 3:
+        if self.posterior >= 0.85 and self.observation_count >= 3:
             self.status = "confident"
         elif self.posterior >= 0.65:
             self.status = "strengthening"
@@ -106,6 +89,16 @@ class Belief(BaseModel):
             self.status = "refuted"
         else:
             self.status = "proposed"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy(cls, data: dict) -> dict:
+        if isinstance(data, dict):
+            if "evidence_count" in data and "observation_count" not in data:
+                data["observation_count"] = data.pop("evidence_count")
+            if "evidence_ids" in data and "observation_ids" not in data:
+                data["observation_ids"] = data.pop("evidence_ids")
+        return data
 
 
 # -- World state ---------------------------------------------------------------
@@ -115,8 +108,7 @@ class WorldState(BaseModel):
     """The complete current state of the Bayesian learning loop."""
 
     beliefs: list[Belief] = Field(default_factory=list)
-    evidence: list[Evidence] = Field(default_factory=list)
-    recent_observations: list[FrameObservation] = Field(default_factory=list)
+    observations: list[Observation] = Field(default_factory=list)
     loop_iteration: int = 0
     total_frames_observed: int = 0
     last_hypothesis_run: float = 0.0
@@ -133,25 +125,25 @@ class WorldState(BaseModel):
         else:
             self.beliefs.append(belief)
 
-    def get_evidence(self, evidence_id: str) -> Evidence | None:
-        return next((e for e in self.evidence if e.id == evidence_id), None)
+    def get_observation(self, observation_id: str) -> Observation | None:
+        return next((o for o in self.observations if o.id == observation_id), None)
 
-    def add_evidence(self, ev: Evidence) -> None:
-        if not self.get_evidence(ev.id):
-            self.evidence.append(ev)
+    def add_observation(self, obs: Observation) -> None:
+        if not self.get_observation(obs.id):
+            self.observations.append(obs)
 
     def as_summary_dict(self) -> dict:
         """Serializable snapshot for WebSocket broadcast."""
         return {
             "loop_iteration": self.loop_iteration,
             "total_frames_observed": self.total_frames_observed,
-            "evidence": {
-                e.id: {
-                    "id": e.id,
-                    "description": e.description,
-                    "frame_ids": e.frame_ids,
+            "observations": {
+                o.id: {
+                    "id": o.id,
+                    "description": o.description,
+                    "frame_ids": o.frame_ids,
                 }
-                for e in self.evidence
+                for o in self.observations
             },
             "beliefs": [
                 {
@@ -163,8 +155,8 @@ class WorldState(BaseModel):
                     "prior": round(b.prior, 3),
                     "likelihood": round(b.likelihood, 3),
                     "posterior": round(b.posterior, 3),
-                    "evidence_count": b.evidence_count,
-                    "evidence_ids": b.evidence_ids,
+                    "observation_count": b.observation_count,
+                    "observation_ids": b.observation_ids,
                     "status": b.status,
                     "origin_reasoning": b.origin_reasoning,
                     "history": [
@@ -173,21 +165,26 @@ class WorldState(BaseModel):
                             "prior": round(s.prior, 3),
                             "likelihood": round(s.likelihood, 3),
                             "posterior": round(s.posterior, 3),
-                            "evidence_count": s.evidence_count,
+                            "observation_count": s.observation_count,
                             "status": s.status,
                             "reasoning": s.reasoning,
-                            "evidence_ids": s.evidence_ids,
+                            "observation_ids": s.observation_ids,
                         }
                         for s in b.history
                     ],
                 }
                 for b in sorted(self.beliefs, key=lambda b: b.posterior, reverse=True)
             ],
-            "recent_scenes": [
-                {"frame_id": o.frame_id, "summary": o.scene_summary}
-                for o in self.recent_observations[-3:]
-            ],
         }
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy(cls, data: dict) -> dict:
+        if isinstance(data, dict):
+            if "evidence" in data and "observations" not in data:
+                data["observations"] = data.pop("evidence")
+            data.pop("recent_observations", None)
+        return data
 
 
 # -- Agent input/output contracts ---------------------------------------------

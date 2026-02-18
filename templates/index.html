@@ -685,19 +685,19 @@
       padding: 4px 8px;
       border-bottom: 1px solid #0f0f1e;
     }
-    /* -- Evidence cards + sequence players -- */
-    .evidence-list {
+    /* -- Observation cards + sequence players -- */
+    .observation-list {
       display: flex;
       flex-direction: column;
       gap: 10px;
     }
-    .evidence-card {
+    .observation-card {
       background: #0a0a16;
       border: 1px solid #1a1a2e;
       border-radius: 3px;
       overflow: hidden;
     }
-    .evidence-card-header {
+    .observation-card-header {
       display: flex;
       align-items: baseline;
       gap: 8px;
@@ -707,15 +707,15 @@
       cursor: pointer;
       user-select: none;
     }
-    .evidence-card-header:hover { background: #111128; }
-    .evidence-id {
+    .observation-card-header:hover { background: #111128; }
+    .observation-id {
       color: #7af;
       font-size: 10px;
       letter-spacing: 1px;
       font-weight: bold;
       flex-shrink: 0;
     }
-    .evidence-desc {
+    .observation-desc {
       color: #889;
       font-size: 11px;
       flex: 1;
@@ -723,24 +723,24 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    .evidence-frame-count {
+    .observation-frame-count {
       color: #446;
       font-size: 10px;
       flex-shrink: 0;
     }
-    .evidence-toggle-arrow {
+    .observation-toggle-arrow {
       color: #446;
       font-size: 9px;
       flex-shrink: 0;
       transition: transform 0.15s;
     }
-    .evidence-toggle-arrow.open { transform: rotate(90deg); }
-    .evidence-player {
+    .observation-toggle-arrow.open { transform: rotate(90deg); }
+    .observation-player {
       padding: 8px;
       display: none;
     }
-    .evidence-player.open { display: block; }
-    .evidence-empty {
+    .observation-player.open { display: block; }
+    .observation-empty {
       color: #334;
       font-style: italic;
       font-size: 11px;
@@ -1536,7 +1536,7 @@
       linkMerge.select('.bbn-edge-line')
         .attr('marker-end', d => `url(#arrow-${d.belief.predicate})`)
         .attr('stroke', d => nodeColor(d.belief.predicate))
-        .attr('stroke-width', d => 1 + d.belief.posterior * 3.5 + Math.min(d.belief.evidence_count, 10) * 0.2)
+        .attr('stroke-width', d => 1 + d.belief.posterior * 3.5 + Math.min(d.belief.observation_count, 10) * 0.2)
         .attr('stroke-opacity', d => d.belief.status === 'refuted' ? 0.15 : 0.3 + d.belief.posterior * 0.7)
         .attr('stroke-dasharray', d => d.belief.status === 'refuted' ? '4,4' : null)
         .attr('fill', 'none');
@@ -1744,8 +1744,8 @@
               ? (d.belief.status === 'refuted' ? 0.2 : 0.4 + d.belief.posterior * 0.6)
               : (activeId ? 0.06 : (d.belief.status === 'refuted' ? 0.15 : 0.3 + d.belief.posterior * 0.7)))
             .attr('stroke-width', isActive && activeId
-              ? 2 + d.belief.posterior * 4 + Math.min(d.belief.evidence_count, 10) * 0.3
-              : 1 + d.belief.posterior * 3.5 + Math.min(d.belief.evidence_count, 10) * 0.2);
+              ? 2 + d.belief.posterior * 4 + Math.min(d.belief.observation_count, 10) * 0.3
+              : 1 + d.belief.posterior * 3.5 + Math.min(d.belief.observation_count, 10) * 0.2);
 
           g.selectAll('.bbn-bar-prior, .bbn-bar-post')
             .attr('opacity', isActive ? 0.9 : (activeId ? 0.1 : 0.7));
@@ -1841,7 +1841,7 @@
           <span class="tt-bar-val">${(b.posterior * 100).toFixed(0)}%</span>
         </div>
         <div class="tt-meta">
-          ${b.evidence_count} frame(s) of evidence &middot; ${b.status}
+          ${b.observation_count} frame(s) observed &middot; ${b.status}
         </div>
       `;
       tooltip.style.display = 'block';
@@ -2126,15 +2126,6 @@
         updateControlState(state.status);
       }
 
-      if (state.recent_scenes && state.recent_scenes.length > 0) {
-        document.getElementById('scene-summary-list').innerHTML =
-          [...state.recent_scenes].reverse().map(o =>
-            `<div class="scene-summary" title="${escapeHtml(o.summary)}">
-              <span style="color:#334;font-size:10px">frame #${o.frame_id} &nbsp;</span>${escapeHtml(o.summary)}
-            </div>`
-          ).join('');
-      }
-
       if (state.beliefs.length !== tab.prevBeliefCount) {
         addLog(`Beliefs updated: ${state.beliefs.length} total (loop #${state.loop_iteration})`, 'log-agent');
         tab.prevBeliefCount = state.beliefs.length;
@@ -2179,7 +2170,7 @@
             <span style="color:${nodeColor(b.object)}">${escapeHtml(b.object)}</span>
           </div>
           <div class="belief-meta">
-            ${b.evidence_count} observation(s) &middot;
+            ${b.observation_count} observation(s) &middot;
             P: ${(b.prior * 100).toFixed(0)}% &rarr; ${pct}%
             <span class="status-badge ${b.status}">${b.status}</span>
           </div>
@@ -2261,7 +2252,7 @@
       html += modalBar('Posterior', b.posterior, predColor);
       html += `</div>`;
       html += `<div class="modal-status-row">
-        <span>${b.evidence_count} observation(s) of evidence</span>
+        <span>${b.observation_count} observation(s)</span>
         <span class="status-badge ${b.status}">${b.status}</span>
       </div>`;
 
@@ -2287,7 +2278,7 @@
             <td>${(s.prior * 100).toFixed(0)}%</td>
             <td>${(s.likelihood * 100).toFixed(0)}%</td>
             <td>${(s.posterior * 100).toFixed(0)}%</td>
-            <td>${s.evidence_count}</td>
+            <td>${s.observation_count}</td>
             <td><span class="status-badge ${s.status}">${s.status}</span></td>
           </tr>`;
         });
@@ -2302,35 +2293,35 @@
         }
       }
 
-      // Evidence section — one card per evidence bundle referenced by this belief
-      const evidenceMap = (tab.lastState && tab.lastState.evidence) || {};
-      const beliefEvidenceIds = b.evidence_ids || [];
+      // Observations section — one card per observation bundle referenced by this belief
+      const observationMap = (tab.lastState && tab.lastState.observations) || {};
+      const beliefObservationIds = b.observation_ids || [];
 
-      // Also collect evidence IDs from history snapshots (may have more)
-      const allEvidenceIds = new Set(beliefEvidenceIds);
+      // Also collect observation IDs from history snapshots (may have more)
+      const allObservationIds = new Set(beliefObservationIds);
       if (b.history) {
-        b.history.forEach(s => { if (s.evidence_ids) s.evidence_ids.forEach(id => allEvidenceIds.add(id)); });
+        b.history.forEach(s => { if (s.observation_ids) s.observation_ids.forEach(id => allObservationIds.add(id)); });
       }
-      const evidenceList = Array.from(allEvidenceIds)
-        .map(id => evidenceMap[id])
+      const observationList = Array.from(allObservationIds)
+        .map(id => observationMap[id])
         .filter(Boolean);
 
-      html += `<div class="modal-section-title">Evidence (${evidenceList.length} bundle${evidenceList.length !== 1 ? 's' : ''})</div>`;
-      if (evidenceList.length === 0) {
-        html += `<div class="evidence-empty">No named evidence bundles stored for this belief yet.</div>`;
+      html += `<div class="modal-section-title">Observations (${observationList.length} bundle${observationList.length !== 1 ? 's' : ''})</div>`;
+      if (observationList.length === 0) {
+        html += `<div class="observation-empty">No named observations stored for this belief yet.</div>`;
       } else {
-        html += `<div class="evidence-list">`;
-        evidenceList.forEach((ev, cardIdx) => {
+        html += `<div class="observation-list">`;
+        observationList.forEach((ev, cardIdx) => {
           const isFirst = cardIdx === 0;
           const safeid = escapeHtml(ev.id);
-          html += `<div class="evidence-card">`;
-          html += `  <div class="evidence-card-header" onclick="toggleEvidenceCard('${safeid}')">`;
-          html += `    <span class="evidence-toggle-arrow${isFirst ? ' open' : ''}" id="ev-arrow-${safeid}">&#9654;</span>`;
-          html += `    <span class="evidence-id">${safeid}</span>`;
-          html += `    <span class="evidence-desc" title="${escapeHtml(ev.description)}">${escapeHtml(ev.description)}</span>`;
-          html += `    <span class="evidence-frame-count">${ev.frame_ids.length} frame${ev.frame_ids.length !== 1 ? 's' : ''}</span>`;
+          html += `<div class="observation-card">`;
+          html += `  <div class="observation-card-header" onclick="toggleObservationCard('${safeid}')">`;
+          html += `    <span class="observation-toggle-arrow${isFirst ? ' open' : ''}" id="ev-arrow-${safeid}">&#9654;</span>`;
+          html += `    <span class="observation-id">${safeid}</span>`;
+          html += `    <span class="observation-desc" title="${escapeHtml(ev.description)}">${escapeHtml(ev.description)}</span>`;
+          html += `    <span class="observation-frame-count">${ev.frame_ids.length} frame${ev.frame_ids.length !== 1 ? 's' : ''}</span>`;
           html += `  </div>`;
-          html += `  <div class="evidence-player${isFirst ? ' open' : ''}" id="ev-player-${safeid}">`;
+          html += `  <div class="observation-player${isFirst ? ' open' : ''}" id="ev-player-${safeid}">`;
           if (ev.frame_ids.length > 0) {
             html += `    <div class="frame-seq-display">`;
             html += `      <img class="frame-seq-img" id="ev-img-${safeid}" src="" alt="Evidence frame">`;
@@ -2369,9 +2360,9 @@
         renderModalChart(b);
       }
 
-      // Start evidence players
+      // Start observation players
       evPlayersDestroy();
-      evidenceList.forEach((ev, cardIdx) => {
+      observationList.forEach((ev, cardIdx) => {
         if (ev.frame_ids.length > 0) {
           evPlayerInit(ev.id, activeScenarioId, ev.frame_ids, cardIdx === 0);
         }
@@ -2466,31 +2457,31 @@
       if (e.key === 'Escape') closeModal();
     });
 
-    // -- Evidence card toggle ---------------------------------------------------
+    // -- Observation card toggle ------------------------------------------------
 
-    function toggleEvidenceCard(evidenceId) {
-      const player = document.getElementById(`ev-player-${evidenceId}`);
-      const arrow  = document.getElementById(`ev-arrow-${evidenceId}`);
+    function toggleObservationCard(obsId) {
+      const player = document.getElementById(`ev-player-${obsId}`);
+      const arrow  = document.getElementById(`ev-arrow-${obsId}`);
       if (!player) return;
       const opening = !player.classList.contains('open');
       player.classList.toggle('open', opening);
       if (arrow) arrow.classList.toggle('open', opening);
       // Start / stop player
       if (opening) {
-        const state = evPlayers[evidenceId];
-        if (state && !state.playing && state.frameIds.length > 1) evPlayerStartTimer(evidenceId);
+        const state = evPlayers[obsId];
+        if (state && !state.playing && state.frameIds.length > 1) evPlayerStartTimer(obsId);
       } else {
-        const state = evPlayers[evidenceId];
+        const state = evPlayers[obsId];
         if (state && state.timer) { clearInterval(state.timer); state.timer = null; state.playing = false; }
       }
     }
 
-    // -- Evidence sequence players (one per evidence bundle) -------------------
+    // -- Observation sequence players (one per observation bundle) -------------
 
-    const evPlayers = {};  // evidenceId -> { frameIds, scenarioId, currentIndex, playing, timer, fps }
+    const evPlayers = {};  // obsId -> { frameIds, scenarioId, currentIndex, playing, timer, fps }
 
-    function evPlayerInit(evidenceId, scenarioId, frameIds, autoplay) {
-      evPlayers[evidenceId] = {
+    function evPlayerInit(obsId, scenarioId, frameIds, autoplay) {
+      evPlayers[obsId] = {
         frameIds,
         scenarioId,
         currentIndex: 0,
@@ -2498,19 +2489,19 @@
         timer: null,
         fps: 3,
       };
-      evPlayerRender(evidenceId);
+      evPlayerRender(obsId);
       if (autoplay && frameIds.length > 1) {
-        evPlayers[evidenceId].playing = true;
-        evPlayerStartTimer(evidenceId);
+        evPlayers[obsId].playing = true;
+        evPlayerStartTimer(obsId);
       }
     }
 
-    function evPlayerRender(evidenceId) {
-      const state = evPlayers[evidenceId];
+    function evPlayerRender(obsId) {
+      const state = evPlayers[obsId];
       if (!state) return;
-      const img    = document.getElementById(`ev-img-${evidenceId}`);
-      const info   = document.getElementById(`ev-info-${evidenceId}`);
-      const slider = document.getElementById(`ev-slider-${evidenceId}`);
+      const img    = document.getElementById(`ev-img-${obsId}`);
+      const info   = document.getElementById(`ev-info-${obsId}`);
+      const slider = document.getElementById(`ev-slider-${obsId}`);
       if (!img) return;
 
       const frameId = state.frameIds[state.currentIndex];
@@ -2520,48 +2511,48 @@
 
       // Highlight active thumbnail for this card
       state.frameIds.forEach((_, i) => {
-        const thumb = document.getElementById(`ev-thumb-${evidenceId}-${i}`);
+        const thumb = document.getElementById(`ev-thumb-${obsId}-${i}`);
         if (thumb) thumb.classList.toggle('active', i === state.currentIndex);
       });
     }
 
-    function evPlayerStartTimer(evidenceId) {
-      const state = evPlayers[evidenceId];
+    function evPlayerStartTimer(obsId) {
+      const state = evPlayers[obsId];
       if (!state) return;
       if (state.timer) clearInterval(state.timer);
       if (state.frameIds.length <= 1) return;
       state.timer = setInterval(() => {
         state.currentIndex = (state.currentIndex + 1) % state.frameIds.length;
-        evPlayerRender(evidenceId);
+        evPlayerRender(obsId);
       }, 1000 / state.fps);
     }
 
-    function evPlayerToggle(evidenceId) {
-      const state = evPlayers[evidenceId];
+    function evPlayerToggle(obsId) {
+      const state = evPlayers[obsId];
       if (!state) return;
       state.playing = !state.playing;
       if (state.playing) {
-        evPlayerStartTimer(evidenceId);
+        evPlayerStartTimer(obsId);
       } else {
         clearInterval(state.timer);
         state.timer = null;
       }
-      const btn = document.getElementById(`ev-play-btn-${evidenceId}`);
+      const btn = document.getElementById(`ev-play-btn-${obsId}`);
       if (btn) btn.innerHTML = state.playing ? '&#9646;&#9646;' : '&#9654;';
     }
 
-    function evPlayerStep(evidenceId, dir) {
-      const state = evPlayers[evidenceId];
+    function evPlayerStep(obsId, dir) {
+      const state = evPlayers[obsId];
       if (!state) return;
       state.currentIndex = (state.currentIndex + dir + state.frameIds.length) % state.frameIds.length;
-      evPlayerRender(evidenceId);
+      evPlayerRender(obsId);
     }
 
-    function evPlayerSeek(evidenceId, index) {
-      const state = evPlayers[evidenceId];
+    function evPlayerSeek(obsId, index) {
+      const state = evPlayers[obsId];
       if (!state) return;
       state.currentIndex = parseInt(index);
-      evPlayerRender(evidenceId);
+      evPlayerRender(obsId);
     }
 
     function evPlayersDestroy() {
