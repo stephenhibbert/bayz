@@ -45,12 +45,23 @@ def format_beliefs_for_eval(world_state: WorldState) -> str:
     return "\n".join(lines)
 
 
+GLOBAL_NO_FALSE_POSITIVES = (
+    "There are no high-confidence incorrect hypotheses. Any belief marked "
+    "'confident' or 'strengthening' (confidence >= 65%) should describe a rule "
+    "that is actually true in the simulation. If any high-confidence belief is "
+    "clearly wrong or describes an interaction that does not exist, this assertion FAILS."
+)
+
+
 async def evaluate_assertions(
     beliefs_text: str,
     assertions: list[str],
     scenario_id: str = "scenario",
 ) -> list[dict]:
     """Evaluate assertions via Dataset.evaluate() so results appear in logfire evals dashboard."""
+
+    # Always include the global false-positive check
+    all_assertions = list(assertions) + [GLOBAL_NO_FALSE_POSITIVES]
 
     def _rubric(assertion: str) -> str:
         return (
@@ -77,7 +88,7 @@ async def evaluate_assertions(
             ),
             metadata={"assertion": assertion},
         )
-        for i, assertion in enumerate(assertions)
+        for i, assertion in enumerate(all_assertions)
     ]
 
     ds = Dataset(name=f"bayz / {scenario_id}", cases=cases)
@@ -88,7 +99,7 @@ async def evaluate_assertions(
     report = await ds.evaluate(passthrough, progress=False)
 
     results = []
-    for case_result, assertion in zip(report.cases, assertions):
+    for case_result, assertion in zip(report.cases, all_assertions):
         pass_result = case_result.assertions.get("LLMJudge_pass")
         score_result = case_result.scores.get("LLMJudge_score")
         passed = bool(pass_result.value) if pass_result else False

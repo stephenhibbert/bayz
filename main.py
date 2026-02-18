@@ -19,6 +19,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from auth import SECRET_KEY, send_magic_link, verify_token
 from evals import evaluate_assertions, format_beliefs_for_eval
 from learning_loop import CHECKPOINT_DIR, FRAMES_DIR, LearningLoop
+
+EVAL_DIR = CHECKPOINT_DIR  # Store eval results alongside checkpoints
 from models import WorldState
 from scenarios import ALL_SCENARIOS, get_scenario
 
@@ -394,7 +396,7 @@ async def run_eval(scenario_id: str):
     passed_count = sum(1 for r in assertion_results if r["passed"])
     overall_score = sum(r["score"] for r in assertion_results) / len(assertion_results)
 
-    return {
+    result = {
         "scenario_id": scenario_id,
         "passed": passed_count == len(assertion_results),
         "score": overall_score,
@@ -403,6 +405,25 @@ async def run_eval(scenario_id: str):
         "assertions": assertion_results,
         "beliefs_evaluated": beliefs_text,
     }
+
+    # Persist eval result to disk so it survives page refresh / reboot
+    EVAL_DIR.mkdir(exist_ok=True)
+    eval_path = EVAL_DIR / f"{scenario_id}_eval.json"
+    eval_path.write_text(json.dumps(result, indent=2))
+
+    return result
+
+
+@app.get("/api/scenario/{scenario_id}/eval")
+async def get_last_eval(scenario_id: str):
+    """Return the last saved eval result for this scenario, if any."""
+    eval_path = EVAL_DIR / f"{scenario_id}_eval.json"
+    if not eval_path.exists():
+        return {"eval": None}
+    try:
+        return json.loads(eval_path.read_text())
+    except Exception:
+        return {"eval": None}
 
 
 @app.get("/api/frames/{scenario_id}/{frame_id}.png")

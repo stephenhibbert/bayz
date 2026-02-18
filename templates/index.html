@@ -178,11 +178,10 @@
       border-radius: 3px;
       padding: 10px 12px;
       flex-shrink: 0;
-      display: none;
       max-height: 220px;
       overflow-y: auto;
     }
-    .eval-result.visible { display: block; }
+    .eval-result.hidden { display: none; }
     .eval-result-header {
       display: flex;
       align-items: center;
@@ -862,7 +861,10 @@
     <span class="arrow" id="rubric-arrow">&#9654;</span> Ground Truth Assertions
   </div>
   <div class="rubric-content hidden" id="rubric-content"></div>
-  <div class="eval-result" id="eval-result"></div>
+  <div class="rubric-toggle" id="eval-toggle" onclick="toggleEvalResult()" style="display:none">
+    <span class="arrow" id="eval-arrow">&#9654;</span> Last Eval Result
+  </div>
+  <div class="eval-result hidden" id="eval-result"></div>
 
   <div class="main-grid">
     <!-- LEFT: Simulator -->
@@ -896,7 +898,7 @@
       </div>
 
       <div class="section-title">Latest Observations</div>
-      <div id="scene-summary-list"><div class="scene-summary" style="color:#334">Waiting for first observation...</div></div>
+      <div id="scene-summary-list"><div class="observation-empty">Waiting for first observation...</div></div>
 
       <div class="section-title" style="margin-top:4px;">Hypotheses &amp; Beliefs</div>
       <div class="beliefs-panel" id="beliefs-scroll">
@@ -952,10 +954,9 @@
       if (!tabState[id]) {
         tabState[id] = {
           bbnNodePositions: {},
-          evalResultHtml: '',
-          evalVisible: false,
           lastState: null,
           prevBeliefCount: 0,
+          prevObsCount: 0,
           status: 'idle',
         };
       }
@@ -1073,10 +1074,9 @@
       await fetch(`/api/scenario/${activeScenarioId}/reset`, { method: 'POST' });
       const tab = getTab(activeScenarioId);
       tab.bbnNodePositions = {};
-      tab.evalResultHtml = '';
-      tab.evalVisible = false;
       tab.lastState = null;
       tab.prevBeliefCount = 0;
+      tab.prevObsCount = 0;
       clearEvalResult();
       clearCanvas();
       clearBBN();
@@ -1094,7 +1094,9 @@
       document.getElementById('stat-frames').textContent = '0';
       document.getElementById('stat-loop').textContent = '0';
       document.getElementById('stat-beliefs').textContent = '0';
-      document.getElementById('scene-summary-list').innerHTML = '<div class="scene-summary" style="color:#334">Waiting for first observation...</div>';
+      document.getElementById('scene-summary-list').innerHTML = '<div class="observation-empty">Waiting for first observation...</div>';
+      const tab = getTab(activeScenarioId);
+      tab.prevObsCount = 0;
       document.getElementById('graph-empty').style.display = '';
       document.getElementById('timeline-empty').style.display = '';
       document.getElementById('beliefs-container').innerHTML = `<div class="empty-state">
@@ -1125,10 +1127,22 @@
       ).join('');
     }
 
+    function toggleEvalResult() {
+      const el = document.getElementById('eval-result');
+      const arrow = document.getElementById('eval-arrow');
+      el.classList.toggle('hidden');
+      arrow.classList.toggle('open');
+    }
+
+    function showEvalToggle(visible) {
+      document.getElementById('eval-toggle').style.display = visible ? '' : 'none';
+    }
+
     function clearEvalResult() {
       const el = document.getElementById('eval-result');
-      el.classList.remove('visible');
+      el.classList.add('hidden');
       el.innerHTML = '';
+      showEvalToggle(false);
     }
 
     async function ctrlRunEval() {
@@ -1141,8 +1155,10 @@
       addLog('Running LLMJudge evaluation...', 'log-agent');
 
       const el = document.getElementById('eval-result');
-      el.classList.add('visible');
+      el.classList.remove('hidden');
       el.innerHTML = '<div class="eval-loading">Running LLMJudge against current beliefs...</div>';
+      showEvalToggle(true);
+      document.getElementById('eval-arrow').classList.add('open');
 
       try {
         const resp = await fetch(`/api/scenario/${activeScenarioId}/eval`, { method: 'POST' });
@@ -1163,9 +1179,6 @@
         btn.disabled = false;
         btn.classList.remove('loading');
         btn.innerHTML = '&#9881; Run Eval';
-        const tab = getTab(activeScenarioId);
-        tab.evalResultHtml = el.innerHTML;
-        tab.evalVisible = el.classList.contains('visible');
       }
     }
 
@@ -1197,7 +1210,8 @@
         `</div>`;
       }
 
-      el.classList.add('visible');
+      el.classList.remove('hidden');
+      showEvalToggle(true);
       el.innerHTML = `
         <div class="eval-result-header">
           <span class="eval-badge ${badgeClass}">${badgeText}</span>
@@ -1223,24 +1237,31 @@
       bbnNodes.forEach(n => {
         tab.bbnNodePositions[n.id] = { x: n.x, y: n.y };
       });
-      const el = document.getElementById('eval-result');
-      tab.evalResultHtml = el.innerHTML;
-      tab.evalVisible = el.classList.contains('visible');
+    }
+
+    async function loadLastEval(scenarioId) {
+      try {
+        const resp = await fetch(`/api/scenario/${scenarioId}/eval`);
+        const data = await resp.json();
+        if (data && data.score !== undefined) {
+          renderEvalResult(data);
+          // Start collapsed
+          document.getElementById('eval-result').classList.add('hidden');
+          document.getElementById('eval-arrow').classList.remove('open');
+        } else {
+          clearEvalResult();
+        }
+      } catch {
+        clearEvalResult();
+      }
     }
 
     function restoreTabState(scenarioId, serverState) {
       const tab = getTab(scenarioId);
       const scenario = scenarios.find(s => s.id === scenarioId);
 
-      // Restore eval result
-      const evalEl = document.getElementById('eval-result');
-      if (tab.evalVisible && tab.evalResultHtml) {
-        evalEl.innerHTML = tab.evalResultHtml;
-        evalEl.classList.add('visible');
-      } else {
-        evalEl.innerHTML = '';
-        evalEl.classList.remove('visible');
-      }
+      // Load last eval from server (persisted across refreshes)
+      loadLastEval(scenarioId);
 
       // Update legend and assertions panel
       if (scenario) {
@@ -2143,6 +2164,25 @@
         document.getElementById('timeline-empty').style.display = '';
       }
 
+      // Render latest observations panel (only when observation count changes)
+      const obsMap = state.observations || {};
+      const obsList = Object.values(obsMap).reverse();  // newest first
+      const obsPanel = document.getElementById('scene-summary-list');
+      if (obsList.length !== (tab.prevObsCount || 0)) {
+        tab.prevObsCount = obsList.length;
+        // Destroy existing panel players before re-rendering
+        Object.keys(evPlayers).filter(k => k.startsWith('lo-')).forEach(k => {
+          if (evPlayers[k].timer) clearInterval(evPlayers[k].timer);
+          delete evPlayers[k];
+        });
+        if (obsList.length === 0) {
+          obsPanel.innerHTML = '<div class="observation-empty">Waiting for first observation...</div>';
+        } else {
+          obsPanel.innerHTML = renderObservationCardsHtml(obsList, activeScenarioId, 'lo', false);
+          initObservationPlayers(obsList, activeScenarioId, 'lo', false);
+        }
+      }
+
       // Render belief cards
       const container = document.getElementById('beliefs-container');
       if (!state.beliefs || state.beliefs.length === 0) {
@@ -2203,6 +2243,82 @@
       const div = document.createElement('div');
       div.textContent = str;
       return div.innerHTML;
+    }
+
+    // =========================================================================
+    // SHARED: Observation card HTML + player init
+    // =========================================================================
+
+    /**
+     * Generate HTML for a list of observation cards with frame players.
+     * @param {Array} observations - array of {id, description, frame_ids}
+     * @param {string} scenarioId - active scenario ID for frame URLs
+     * @param {string} prefix - DOM id prefix to avoid collisions ('ev' for modal, 'lo' for latest obs panel)
+     * @param {boolean} firstOpen - whether to auto-open the first card
+     * @returns {string} HTML string
+     */
+    function renderObservationCardsHtml(observations, scenarioId, prefix, firstOpen) {
+      if (!observations || observations.length === 0) {
+        return `<div class="observation-empty">No observations yet.</div>`;
+      }
+      let html = `<div class="observation-list">`;
+      observations.forEach((obs, idx) => {
+        const isFirst = firstOpen && idx === 0;
+        const safeid = escapeHtml(obs.id);
+        const pid = `${prefix}-${safeid}`;
+        html += `<div class="observation-card">`;
+        html += `  <div class="observation-card-header" onclick="toggleObservationCard('${pid}')">`;
+        html += `    <span class="observation-toggle-arrow${isFirst ? ' open' : ''}" id="${pid}-arrow">&#9654;</span>`;
+        html += `    <span class="observation-id">${safeid}</span>`;
+        html += `    <span class="observation-desc" title="${escapeHtml(obs.description)}">${escapeHtml(obs.description)}</span>`;
+        html += `    <span class="observation-frame-count">${obs.frame_ids.length} frame${obs.frame_ids.length !== 1 ? 's' : ''}</span>`;
+        html += `  </div>`;
+        html += `  <div class="observation-player${isFirst ? ' open' : ''}" id="${pid}-player">`;
+        if (obs.frame_ids.length > 0) {
+          html += `    <div class="frame-seq-display">`;
+          html += `      <img class="frame-seq-img" id="${pid}-img" src="" alt="Observation frame">`;
+          html += `    </div>`;
+          html += `    <div class="frame-seq-controls">`;
+          html += `      <button class="frame-seq-btn" onclick="evPlayerStep('${pid}',-1)">&#9664;</button>`;
+          html += `      <input class="frame-seq-slider" id="${pid}-slider" type="range"
+                           min="0" max="${obs.frame_ids.length - 1}" value="0"
+                           oninput="evPlayerSeek('${pid}',this.value)">`;
+          html += `      <button class="frame-seq-btn" id="${pid}-play-btn"
+                           onclick="evPlayerToggle('${pid}')">&#9646;&#9646;</button>`;
+          html += `      <button class="frame-seq-btn" onclick="evPlayerStep('${pid}',1)">&#9654;</button>`;
+          html += `      <span class="frame-seq-info" id="${pid}-info"></span>`;
+          html += `    </div>`;
+          html += `    <div class="frame-seq-strip">`;
+          obs.frame_ids.forEach((fid, fi) => {
+            html += `<img class="frame-seq-thumb${fi === 0 ? ' active' : ''}"
+                         id="${pid}-thumb-${fi}"
+                         src="/api/frames/${escapeHtml(scenarioId)}/${fid}.png"
+                         onclick="evPlayerSeek('${pid}',${fi})"
+                         title="Frame #${fid}">`;
+          });
+          html += `    </div>`;
+        }
+        html += `  </div>`;
+        html += `</div>`;
+      });
+      html += `</div>`;
+      return html;
+    }
+
+    /**
+     * Initialize frame sequence players for a list of observations.
+     * @param {Array} observations - array of {id, description, frame_ids}
+     * @param {string} scenarioId - active scenario ID
+     * @param {string} prefix - DOM id prefix (must match renderObservationCardsHtml)
+     * @param {boolean} autoplayFirst - whether to auto-play the first card
+     */
+    function initObservationPlayers(observations, scenarioId, prefix, autoplayFirst) {
+      if (!observations) return;
+      observations.forEach((obs, idx) => {
+        if (obs.frame_ids.length > 0) {
+          evPlayerInit(`${prefix}-${obs.id}`, scenarioId, obs.frame_ids, autoplayFirst && idx === 0);
+        }
+      });
     }
 
     // =========================================================================
@@ -2307,50 +2423,7 @@
         .filter(Boolean);
 
       html += `<div class="modal-section-title">Observations (${observationList.length} bundle${observationList.length !== 1 ? 's' : ''})</div>`;
-      if (observationList.length === 0) {
-        html += `<div class="observation-empty">No named observations stored for this belief yet.</div>`;
-      } else {
-        html += `<div class="observation-list">`;
-        observationList.forEach((ev, cardIdx) => {
-          const isFirst = cardIdx === 0;
-          const safeid = escapeHtml(ev.id);
-          html += `<div class="observation-card">`;
-          html += `  <div class="observation-card-header" onclick="toggleObservationCard('${safeid}')">`;
-          html += `    <span class="observation-toggle-arrow${isFirst ? ' open' : ''}" id="ev-arrow-${safeid}">&#9654;</span>`;
-          html += `    <span class="observation-id">${safeid}</span>`;
-          html += `    <span class="observation-desc" title="${escapeHtml(ev.description)}">${escapeHtml(ev.description)}</span>`;
-          html += `    <span class="observation-frame-count">${ev.frame_ids.length} frame${ev.frame_ids.length !== 1 ? 's' : ''}</span>`;
-          html += `  </div>`;
-          html += `  <div class="observation-player${isFirst ? ' open' : ''}" id="ev-player-${safeid}">`;
-          if (ev.frame_ids.length > 0) {
-            html += `    <div class="frame-seq-display">`;
-            html += `      <img class="frame-seq-img" id="ev-img-${safeid}" src="" alt="Evidence frame">`;
-            html += `    </div>`;
-            html += `    <div class="frame-seq-controls">`;
-            html += `      <button class="frame-seq-btn" onclick="evPlayerStep('${safeid}',-1)">&#9664;</button>`;
-            html += `      <input class="frame-seq-slider" id="ev-slider-${safeid}" type="range"
-                             min="0" max="${ev.frame_ids.length - 1}" value="0"
-                             oninput="evPlayerSeek('${safeid}',this.value)">`;
-            html += `      <button class="frame-seq-btn" id="ev-play-btn-${safeid}"
-                             onclick="evPlayerToggle('${safeid}')">&#9646;&#9646;</button>`;
-            html += `      <button class="frame-seq-btn" onclick="evPlayerStep('${safeid}',1)">&#9654;</button>`;
-            html += `      <span class="frame-seq-info" id="ev-info-${safeid}"></span>`;
-            html += `    </div>`;
-            html += `    <div class="frame-seq-strip">`;
-            ev.frame_ids.forEach((fid, fi) => {
-              html += `<img class="frame-seq-thumb${fi === 0 ? ' active' : ''}"
-                           id="ev-thumb-${safeid}-${fi}"
-                           src="/api/frames/${escapeHtml(activeScenarioId)}/${fid}.png"
-                           onclick="evPlayerSeek('${safeid}',${fi})"
-                           title="Frame #${fid}">`;
-            });
-            html += `    </div>`;
-          }
-          html += `  </div>`;
-          html += `</div>`;
-        });
-        html += `</div>`;
-      }
+      html += renderObservationCardsHtml(observationList, activeScenarioId, 'ev', true);
 
       document.getElementById('modal-body').innerHTML = html;
       document.getElementById('belief-modal').classList.add('visible');
@@ -2362,11 +2435,7 @@
 
       // Start observation players
       evPlayersDestroy();
-      observationList.forEach((ev, cardIdx) => {
-        if (ev.frame_ids.length > 0) {
-          evPlayerInit(ev.id, activeScenarioId, ev.frame_ids, cardIdx === 0);
-        }
-      });
+      initObservationPlayers(observationList, activeScenarioId, 'ev', true);
     }
 
     function renderModalChart(b) {
@@ -2459,19 +2528,19 @@
 
     // -- Observation card toggle ------------------------------------------------
 
-    function toggleObservationCard(obsId) {
-      const player = document.getElementById(`ev-player-${obsId}`);
-      const arrow  = document.getElementById(`ev-arrow-${obsId}`);
+    function toggleObservationCard(pid) {
+      const player = document.getElementById(`${pid}-player`);
+      const arrow  = document.getElementById(`${pid}-arrow`);
       if (!player) return;
       const opening = !player.classList.contains('open');
       player.classList.toggle('open', opening);
       if (arrow) arrow.classList.toggle('open', opening);
       // Start / stop player
       if (opening) {
-        const state = evPlayers[obsId];
-        if (state && !state.playing && state.frameIds.length > 1) evPlayerStartTimer(obsId);
+        const state = evPlayers[pid];
+        if (state && !state.playing && state.frameIds.length > 1) evPlayerStartTimer(pid);
       } else {
-        const state = evPlayers[obsId];
+        const state = evPlayers[pid];
         if (state && state.timer) { clearInterval(state.timer); state.timer = null; state.playing = false; }
       }
     }
@@ -2496,12 +2565,12 @@
       }
     }
 
-    function evPlayerRender(obsId) {
-      const state = evPlayers[obsId];
+    function evPlayerRender(pid) {
+      const state = evPlayers[pid];
       if (!state) return;
-      const img    = document.getElementById(`ev-img-${obsId}`);
-      const info   = document.getElementById(`ev-info-${obsId}`);
-      const slider = document.getElementById(`ev-slider-${obsId}`);
+      const img    = document.getElementById(`${pid}-img`);
+      const info   = document.getElementById(`${pid}-info`);
+      const slider = document.getElementById(`${pid}-slider`);
       if (!img) return;
 
       const frameId = state.frameIds[state.currentIndex];
@@ -2511,7 +2580,7 @@
 
       // Highlight active thumbnail for this card
       state.frameIds.forEach((_, i) => {
-        const thumb = document.getElementById(`ev-thumb-${obsId}-${i}`);
+        const thumb = document.getElementById(`${pid}-thumb-${i}`);
         if (thumb) thumb.classList.toggle('active', i === state.currentIndex);
       });
     }
@@ -2537,7 +2606,7 @@
         clearInterval(state.timer);
         state.timer = null;
       }
-      const btn = document.getElementById(`ev-play-btn-${obsId}`);
+      const btn = document.getElementById(`${obsId}-play-btn`);
       if (btn) btn.innerHTML = state.playing ? '&#9646;&#9646;' : '&#9654;';
     }
 
