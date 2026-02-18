@@ -389,7 +389,7 @@ async def run_eval(scenario_id: str):
         return {"error": "no_beliefs", "message": "No beliefs to evaluate yet."}
     config = get_scenario(scenario_id)
     beliefs_text = format_beliefs_for_eval(loop.world_state)
-    assertion_results = await evaluate_assertions(beliefs_text, config.assertions)
+    assertion_results = await evaluate_assertions(beliefs_text, config.assertions, scenario_id=scenario_id)
 
     passed_count = sum(1 for r in assertion_results if r["passed"])
     overall_score = sum(r["score"] for r in assertion_results) / len(assertion_results)

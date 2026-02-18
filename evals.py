@@ -8,8 +8,7 @@ import os
 import sys
 
 from pydantic_evals import Case, Dataset
-from pydantic_evals.evaluators import LLMJudge
-from pydantic_evals.evaluators.llm_as_a_judge import judge_output
+from pydantic_evals.evaluators import LLMJudge, OutputConfig
 
 from learning_loop import LearningLoop
 from models import WorldState
@@ -49,29 +48,63 @@ def format_beliefs_for_eval(world_state: WorldState) -> str:
 async def evaluate_assertions(
     beliefs_text: str,
     assertions: list[str],
+    scenario_id: str = "scenario",
 ) -> list[dict]:
-    """Run each assertion as an independent binary judge call."""
-    results = []
-    for assertion in assertions:
-        rubric = (
+    """Evaluate assertions via Dataset.evaluate() so results appear in logfire evals dashboard."""
+
+    def _rubric(assertion: str) -> str:
+        return (
             f"Does the agent's belief system correctly capture the following?\n\n"
             f'"{assertion}"\n\n'
             f"Answer YES if the beliefs clearly support this with reasonable confidence "
             f"(posterior > 0.5). Answer NO if the assertion is missing, contradicted, "
             f"or only weakly supported."
         )
-        grading = await judge_output(output=beliefs_text, rubric=rubric, model=MODEL)
+
+    cases = [
+        Case(
+            name=f"{scenario_id} / {i + 1}",
+            inputs=beliefs_text,
+            expected_output=None,
+            evaluators=(
+                LLMJudge(
+                    rubric=_rubric(assertion),
+                    model=MODEL,
+                    include_input=False,
+                    score=OutputConfig(include_reason=False),
+                    assertion=OutputConfig(include_reason=True),
+                ),
+            ),
+            metadata={"assertion": assertion},
+        )
+        for i, assertion in enumerate(assertions)
+    ]
+
+    ds = Dataset(name=f"bayz / {scenario_id}", cases=cases)
+
+    async def passthrough(beliefs: str) -> str:
+        return beliefs
+
+    report = await ds.evaluate(passthrough, progress=False)
+
+    results = []
+    for case_result, assertion in zip(report.cases, assertions):
+        pass_result = case_result.assertions.get("LLMJudge_pass")
+        score_result = case_result.scores.get("LLMJudge_score")
+        passed = bool(pass_result.value) if pass_result else False
+        score = float(score_result.value) if score_result else (1.0 if passed else 0.0)
+        reason = (pass_result.reason or "") if pass_result else ""
         results.append({
             "assertion": assertion,
-            "passed": grading.pass_,
-            "score": grading.score,
-            "reason": grading.reason,
+            "passed": passed,
+            "score": score,
+            "reason": reason,
         })
         log.info(
             "Assertion [%s]: %s — %s",
-            "PASS" if grading.pass_ else "FAIL",
+            "PASS" if passed else "FAIL",
             assertion[:60],
-            grading.reason[:80],
+            reason[:80],
         )
     return results
 
