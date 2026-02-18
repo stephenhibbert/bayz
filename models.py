@@ -183,11 +183,10 @@ class WorldState(BaseModel):
                 }
                 for b in sorted(self.beliefs, key=lambda b: b.posterior, reverse=True)
             ],
-            "recent_scene": (
-                self.recent_observations[-1].scene_summary
-                if self.recent_observations
-                else ""
-            ),
+            "recent_scenes": [
+                {"frame_id": o.frame_id, "summary": o.scene_summary}
+                for o in self.recent_observations[-3:]
+            ],
         }
 
 

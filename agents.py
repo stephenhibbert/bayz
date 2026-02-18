@@ -73,6 +73,9 @@ Use your tools:
 - get_current_beliefs: review your existing hypotheses and their confidence scores
 
 Work like a scientist: observe first, then hypothesise, then gather more evidence.
+Importantly, propose your first hypotheses early — after just 2-3 observations —
+even if you are uncertain. Early hypotheses at low confidence (0.3–0.5) are fine;
+you will refine them with more evidence. Do not wait until you are sure.
 When you are genuinely confident you understand the key rules of this simulation,
 return a concise summary of your conclusions.""",
 )

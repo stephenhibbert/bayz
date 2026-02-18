@@ -401,6 +401,10 @@
     .pred-legend-line {
       width: 16px; height: 2px; display: inline-block; border-radius: 1px;
     }
+    .bbn-legend-node {
+      width: 10px; height: 10px; border-radius: 50%;
+      border: 2px solid #7af; display: inline-block; background: #0c0c1a;
+    }
     /* -- Timeline -- */
     .timeline-container {
       flex-shrink: 0;
@@ -442,11 +446,17 @@
       color: #9ab;
       font-size: 12px;
       font-style: italic;
-      min-height: 32px;
-      padding: 6px 8px;
+      padding: 5px 8px;
       background: #0f0f1e;
       border-left: 2px solid #446;
       flex-shrink: 0;
+    }
+    .scene-summary + .scene-summary {
+      border-top: 1px solid #1a1a2a;
+      opacity: 0.65;
+    }
+    .scene-summary + .scene-summary + .scene-summary {
+      opacity: 0.4;
     }
     .belief-card {
       background: #0f0f1e;
@@ -885,8 +895,8 @@
         <div class="timeline-empty" id="timeline-empty">No history yet</div>
       </div>
 
-      <div class="section-title">Latest Observation</div>
-      <div class="scene-summary" id="scene-summary">Waiting for first observation...</div>
+      <div class="section-title">Latest Observations</div>
+      <div id="scene-summary-list"><div class="scene-summary" style="color:#334">Waiting for first observation...</div></div>
 
       <div class="section-title" style="margin-top:4px;">Hypotheses &amp; Beliefs</div>
       <div class="beliefs-panel" id="beliefs-scroll">
@@ -1092,7 +1102,7 @@
       document.getElementById('stat-frames').textContent = '0';
       document.getElementById('stat-loop').textContent = '0';
       document.getElementById('stat-beliefs').textContent = '0';
-      document.getElementById('scene-summary').textContent = 'Waiting for first observation...';
+      document.getElementById('scene-summary-list').innerHTML = '<div class="scene-summary" style="color:#334">Waiting for first observation...</div>';
       document.getElementById('graph-empty').style.display = '';
       document.getElementById('timeline-empty').style.display = '';
       document.getElementById('beliefs-container').innerHTML = `<div class="empty-state">
@@ -1420,18 +1430,21 @@
         .on('tick', tickBBN)
         .alphaDecay(0.02);
 
-      // Build predicate legend
+      // Build generic BBN legend
       const legendEl = document.getElementById('predicate-legend');
-      legendEl.innerHTML = Object.entries(PREDICATE_COLORS).map(([pred, color]) =>
+      legendEl.innerHTML =
         `<div class="pred-legend-item">
-          <span class="pred-legend-line" style="background:${color}"></span>
-          ${pred}
-        </div>`
-      ).join('') +
-      `<div class="pred-legend-item" style="margin-left:8px;color:#445">
-        <span style="display:inline-block;width:16px;height:4px;background:#446;border-radius:1px;margin-right:2px;vertical-align:middle"></span>prior
-        <span style="display:inline-block;width:16px;height:4px;background:#7af;border-radius:1px;margin-left:4px;margin-right:2px;vertical-align:middle"></span>posterior
-      </div>`;
+          <span class="bbn-legend-node"></span>entity type
+        </div>
+        <div class="pred-legend-item">
+          <span class="pred-legend-line" style="background:#446;opacity:0.8"></span>relationship
+        </div>
+        <div class="pred-legend-item" style="color:#445">
+          <span style="display:inline-block;width:16px;height:2px;background:#446;border-radius:1px;margin-right:2px;vertical-align:middle;border-top:2px dashed #446;height:0"></span>prior
+        </div>
+        <div class="pred-legend-item" style="color:#445">
+          <span style="display:inline-block;width:16px;height:2px;background:#7af;border-radius:1px;margin-right:2px;vertical-align:middle"></span>posterior
+        </div>`;
 
       window.addEventListener('resize', () => {
         const r = svg.node().getBoundingClientRect();
@@ -2126,8 +2139,13 @@
         updateControlState(state.status);
       }
 
-      if (state.recent_scene) {
-        document.getElementById('scene-summary').textContent = state.recent_scene;
+      if (state.recent_scenes && state.recent_scenes.length > 0) {
+        document.getElementById('scene-summary-list').innerHTML =
+          [...state.recent_scenes].reverse().map(o =>
+            `<div class="scene-summary">
+              <span style="color:#334;font-size:10px">frame #${o.frame_id} &nbsp;</span>${escapeHtml(o.summary)}
+            </div>`
+          ).join('');
       }
 
       if (state.beliefs.length !== tab.prevBeliefCount) {
