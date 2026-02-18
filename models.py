@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 
 # -- Named observation bundles -------------------------------------------------
@@ -15,6 +15,7 @@ class Observation(BaseModel):
     id: str = Field(description="Unique slug identifying this observation, e.g. 'obs-001'")
     description: str = Field(description="What was observed across these frames")
     frame_ids: list[int] = Field(default_factory=list, description="Frame IDs captured in this bundle")
+    entities: list[str] = Field(default_factory=list, description="Entity names observed in these frames")
     timestamp: float = Field(default_factory=time.time)
 
 
@@ -35,84 +36,57 @@ class Hypothesis(BaseModel):
     model_config = {"populate_by_name": True}
 
 
-# -- Scored beliefs ------------------------------------------------------------
+# -- Verdict-based beliefs -----------------------------------------------------
 
 
 class BeliefSnapshot(BaseModel):
-    """A point-in-time record of a belief's Bayesian quantities at one iteration."""
+    """A single verdict recorded against a belief."""
 
     iteration: int
-    prior: float
-    likelihood: float
-    posterior: float
-    observation_count: int
-    status: str
+    verdict: Literal["supports", "contradicts", "neutral"]
     reasoning: str = ""
-    observation_ids: list[str] = Field(default_factory=list, description="Observations used in this update")
-
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_legacy(cls, data: dict) -> dict:
-        if isinstance(data, dict):
-            if "evidence_count" in data and "observation_count" not in data:
-                data["observation_count"] = data.pop("evidence_count")
-            if "evidence_ids" in data and "observation_ids" not in data:
-                data["observation_ids"] = data.pop("evidence_ids")
-        return data
+    observation_ids: list[str] = Field(default_factory=list)
 
 
 class Belief(BaseModel):
-    """A hypothesis with a Bayesian-style confidence score."""
+    """A hypothesis with confidence derived from verdict counts."""
 
     hypothesis: Hypothesis
-    prior: float = Field(default=0.5, ge=0.0, le=1.0)
-    likelihood: float = Field(
-        default=0.5, ge=0.0, le=1.0, description="P(observations | hypothesis true)"
-    )
-    posterior: float = Field(default=0.5, ge=0.0, le=1.0, description="Updated belief score")
-    observation_count: int = 0
-    observation_ids: list[str] = Field(
-        default_factory=list,
-        description="IDs of Observation bundles that have contributed to this belief",
-    )
+    supports: int = 0
+    contradicts: int = 0
     status: Literal["proposed", "strengthening", "confident", "refuted"] = "proposed"
     last_updated: float = Field(default_factory=time.time)
     history: list[BeliefSnapshot] = Field(default_factory=list)
-    origin_reasoning: str = Field(default="", description="Why the hypothesis agent proposed this")
+
+    @property
+    def confidence(self) -> float:
+        """Laplace-smoothed confidence from verdict counts."""
+        return (self.supports + 1) / (self.supports + self.contradicts + 2)
 
     def update_status(self) -> None:
-        if self.posterior >= 0.85 and self.observation_count >= 3:
+        c = self.confidence
+        total = self.supports + self.contradicts
+        if c >= 0.8 and total >= 3:
             self.status = "confident"
-        elif self.posterior >= 0.65:
+        elif c >= 0.65:
             self.status = "strengthening"
-        elif self.posterior < 0.2:
+        elif c <= 0.25:
             self.status = "refuted"
         else:
             self.status = "proposed"
-
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_legacy(cls, data: dict) -> dict:
-        if isinstance(data, dict):
-            if "evidence_count" in data and "observation_count" not in data:
-                data["observation_count"] = data.pop("evidence_count")
-            if "evidence_ids" in data and "observation_ids" not in data:
-                data["observation_ids"] = data.pop("evidence_ids")
-        return data
 
 
 # -- World state ---------------------------------------------------------------
 
 
 class WorldState(BaseModel):
-    """The complete current state of the Bayesian learning loop."""
+    """The complete current state of the learning loop."""
 
     beliefs: list[Belief] = Field(default_factory=list)
     observations: list[Observation] = Field(default_factory=list)
+    entities: list[str] = Field(default_factory=list)
     loop_iteration: int = 0
     total_frames_observed: int = 0
-    last_hypothesis_run: float = 0.0
-    last_belief_update: float = 0.0
 
     def get_belief(self, hypothesis_id: str) -> Belief | None:
         return next((b for b in self.beliefs if b.hypothesis.id == hypothesis_id), None)
@@ -132,16 +106,22 @@ class WorldState(BaseModel):
         if not self.get_observation(obs.id):
             self.observations.append(obs)
 
+    def add_entity(self, name: str) -> None:
+        if name not in self.entities:
+            self.entities.append(name)
+
     def as_summary_dict(self) -> dict:
         """Serializable snapshot for WebSocket broadcast."""
         return {
             "loop_iteration": self.loop_iteration,
             "total_frames_observed": self.total_frames_observed,
+            "entities": self.entities,
             "observations": {
                 o.id: {
                     "id": o.id,
                     "description": o.description,
                     "frame_ids": o.frame_ids,
+                    "entities": o.entities,
                 }
                 for o in self.observations
             },
@@ -152,49 +132,20 @@ class WorldState(BaseModel):
                     "subject": b.hypothesis.subject,
                     "predicate": b.hypothesis.predicate,
                     "object": b.hypothesis.object_,
-                    "prior": round(b.prior, 3),
-                    "likelihood": round(b.likelihood, 3),
-                    "posterior": round(b.posterior, 3),
-                    "observation_count": b.observation_count,
-                    "observation_ids": b.observation_ids,
+                    "supports": b.supports,
+                    "contradicts": b.contradicts,
+                    "confidence": round(b.confidence, 3),
                     "status": b.status,
-                    "origin_reasoning": b.origin_reasoning,
                     "history": [
                         {
                             "iteration": s.iteration,
-                            "prior": round(s.prior, 3),
-                            "likelihood": round(s.likelihood, 3),
-                            "posterior": round(s.posterior, 3),
-                            "observation_count": s.observation_count,
-                            "status": s.status,
+                            "verdict": s.verdict,
                             "reasoning": s.reasoning,
                             "observation_ids": s.observation_ids,
                         }
                         for s in b.history
                     ],
                 }
-                for b in sorted(self.beliefs, key=lambda b: b.posterior, reverse=True)
+                for b in sorted(self.beliefs, key=lambda b: b.confidence, reverse=True)
             ],
         }
-
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_legacy(cls, data: dict) -> dict:
-        if isinstance(data, dict):
-            if "evidence" in data and "observations" not in data:
-                data["observations"] = data.pop("evidence")
-            data.pop("recent_observations", None)
-        return data
-
-
-# -- Agent input/output contracts ---------------------------------------------
-
-
-class HypothesisAgentOutput(BaseModel):
-    new_hypotheses: list[Hypothesis] = Field(default_factory=list)
-    reasoning: str = ""
-
-
-class BeliefUpdaterOutput(BaseModel):
-    updated_beliefs: list[Belief] = Field(default_factory=list)
-    reasoning: str = ""

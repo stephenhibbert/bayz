@@ -36,11 +36,11 @@ def format_beliefs_for_eval(world_state: WorldState) -> str:
         f"({world_state.total_frames_observed} frames observed), "
         f"the system holds {len(world_state.beliefs)} beliefs:\n"
     ]
-    for b in sorted(world_state.beliefs, key=lambda b: b.posterior, reverse=True):
+    for b in sorted(world_state.beliefs, key=lambda b: b.confidence, reverse=True):
         lines.append(
             f"- [{b.status.upper()}] {b.hypothesis.description} "
             f"({b.hypothesis.subject} {b.hypothesis.predicate} {b.hypothesis.object_}) "
-            f"| confidence: {b.posterior:.0%} | observations: {b.observation_count}"
+            f"| confidence: {b.confidence:.0%} | +{b.supports}/-{b.contradicts}"
         )
     return "\n".join(lines)
 
@@ -68,7 +68,7 @@ async def evaluate_assertions(
             f"Does the agent's belief system correctly capture the following?\n\n"
             f'"{assertion}"\n\n'
             f"Answer YES if the beliefs clearly support this with reasonable confidence "
-            f"(posterior > 0.5). Answer NO if the assertion is missing, contradicted, "
+            f"(confidence > 50%). Answer NO if the assertion is missing, contradicted, "
             f"or only weakly supported."
         )
 

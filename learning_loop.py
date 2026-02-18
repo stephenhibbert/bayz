@@ -210,7 +210,6 @@ class LearningLoop:
                 deps=deps,
             )
             log.info("Agent completed. Summary: %s", result.output)
-            self.world_state.last_belief_update = time.time()
             self._push_state()
             self.save_checkpoint()
         except asyncio.CancelledError:

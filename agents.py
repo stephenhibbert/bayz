@@ -24,6 +24,7 @@ load_dotenv()
 from models import (
     Belief,
     BeliefSnapshot,
+    Hypothesis,
     Observation,
     WorldState,
 )
@@ -148,31 +149,27 @@ scientist_agent = Agent(
     output_type=str,
     history_processors=[_cap_images],
     system_prompt="""\
-You are an autonomous scientific observer. You have been placed in front of a live
-simulation that you know nothing about. No one will tell you what is in it.
+You are an autonomous scientific observer placed in front of a live simulation
+that you know nothing about. Your mission: figure out the rules purely through
+observation.
 
-Your mission: figure out the rules of this simulation purely through observation.
-Discover what entities exist, how they behave, and what interactions govern them.
-Form hypotheses, test them with more observations, and update your confidence
-based on what you observe.
+Use your tools in this cycle:
+1. get_frames — capture frames to watch what is happening
+2. record_observation — name and save a bundle of frames, listing the entities
+   you can see. IMPORTANT: reuse entity names from the known entity list to
+   avoid synonyms (e.g. always use "red" not "crimson" if "red" already exists)
+3. propose_hypothesis — propose an interaction rule between two entity types,
+   citing the observations that support it
+4. judge_belief — for each existing hypothesis, say whether new observations
+   support (+), contradict (-), or are neutral to it. Give a brief reason.
+5. get_current_beliefs — review your hypotheses and their confidence scores
 
-Use your tools:
-- get_frames: capture frames from the live simulation (you can request multiple
-  adjacent frames to observe motion and interactions over time)
-- record_observation: name and save a bundle of frames as a reusable observation;
-  you must do this before citing frames in a hypothesis or belief update
-- propose_hypothesis: propose a new rule you believe governs entity interactions,
-  citing the observation IDs that support it
-- update_belief: revise your confidence in a hypothesis, citing the observation IDs
-  that informed the update
-- get_current_beliefs: review your existing hypotheses and their confidence scores
+Work like a scientist: observe, hypothesise early (after 2-3 observations),
+then gather more evidence and judge your beliefs. Propose hypotheses even when
+uncertain — early proposals are refined with more verdicts later.
 
-Work like a scientist: observe first, then hypothesise, then gather more evidence.
-Importantly, propose your first hypotheses early — after just 2-3 observations —
-even if you are uncertain. Early hypotheses at low confidence (0.3–0.5) are fine;
-you will refine them with more evidence. Do not wait until you are sure.
-When you are genuinely confident you understand the key rules of this simulation,
-return a concise summary of your conclusions.""",
+When you are confident you understand the key rules, return a concise summary
+of your conclusions.""",
 )
 
 
@@ -224,18 +221,19 @@ async def record_observation(
     observation_id: str,
     description: str,
     frame_ids: list[int],
+    entities: list[str],
 ) -> str:
     """Store a named bundle of frames as a reusable observation.
 
     Call this when you have captured frames that clearly show something
-    relevant — e.g. an interaction you want to reference when proposing
-    or updating beliefs. The same observation can be cited by multiple
-    hypotheses.
+    relevant. The same observation can be cited by multiple hypotheses.
 
     Args:
         observation_id: Unique slug for this observation, e.g. 'obs-001'.
-        description: What these frames show, e.g. 'yellow attracts blues over 5 frames'.
+        description: What these frames show, e.g. 'red dots chasing cyan dots'.
         frame_ids: The frame numbers captured (from get_frames output).
+        entities: Entity names visible in these frames. Reuse names from the
+                  known entity list to avoid duplicates.
     """
     await ctx.deps.paused_event.wait()
     if ctx.deps.stop_event.is_set():
@@ -244,14 +242,25 @@ async def record_observation(
     if ctx.deps.world_state.get_observation(observation_id):
         return f"Observation '{observation_id}' already exists."
 
-    obs = Observation(id=observation_id, description=description, frame_ids=frame_ids)
+    # Register any new entity names
+    for name in entities:
+        ctx.deps.world_state.add_entity(name)
+
+    obs = Observation(
+        id=observation_id,
+        description=description,
+        frame_ids=frame_ids,
+        entities=entities,
+    )
     ctx.deps.world_state.add_observation(obs)
 
-    # Frames are already saved to disk by get_frames at capture time.
-    # We only store the metadata here.
     ctx.deps.push_state_cb()
+    known = ", ".join(ctx.deps.world_state.entities)
     log.info("Observation stored: %s — %s (%d frames)", observation_id, description, len(frame_ids))
-    return f"Observation '{observation_id}' stored: {description} ({len(frame_ids)} frames)."
+    return (
+        f"Observation '{observation_id}' stored: {description} ({len(frame_ids)} frames). "
+        f"Known entities: [{known}]"
+    )
 
 
 @scientist_agent.tool
@@ -267,7 +276,7 @@ async def propose_hypothesis(
     """Propose a new hypothesis about an interaction rule in the simulation.
 
     Args:
-        hypothesis_id: Unique slug for this hypothesis, e.g. 'red-chases-blue'.
+        hypothesis_id: Unique slug for this hypothesis, e.g. 'red-chases-cyan'.
         subject: The entity type performing the action.
         predicate: The interaction type (e.g. chases, flees, attracts, ignores, feeds_on).
         target: The entity type being acted upon.
@@ -281,7 +290,7 @@ async def propose_hypothesis(
 
     # Reject exact ID duplicates
     if ctx.deps.world_state.get_belief(hypothesis_id):
-        return f"Hypothesis '{hypothesis_id}' already exists. Use update_belief to revise it."
+        return f"Hypothesis '{hypothesis_id}' already exists. Use judge_belief to update it."
 
     # Reject semantic duplicates by (subject, predicate, target) triple
     triple = (subject, predicate, target)
@@ -289,7 +298,7 @@ async def propose_hypothesis(
         if (b.hypothesis.subject, b.hypothesis.predicate, b.hypothesis.object_) == triple:
             return (
                 f"A semantically equivalent hypothesis already exists: '{b.hypothesis.id}'. "
-                f"Use update_belief to revise it."
+                f"Use judge_belief to update it."
             )
 
     # Validate observation IDs
@@ -297,7 +306,6 @@ async def propose_hypothesis(
     if unknown:
         return f"Unknown observation IDs: {unknown}. Call record_observation first."
 
-    from models import Hypothesis
     hyp = Hypothesis.model_validate({
         "id": hypothesis_id,
         "subject": subject,
@@ -306,28 +314,15 @@ async def propose_hypothesis(
         "description": description,
     })
 
-    # Count frames across referenced observations
-    initial_frame_count = sum(
-        len(ctx.deps.world_state.get_observation(oid).frame_ids)
-        for oid in observation_ids
-        if ctx.deps.world_state.get_observation(oid)
-    )
-
     belief = Belief(
         hypothesis=hyp,
-        prior=0.5,
-        likelihood=0.5,
-        posterior=0.5,
-        observation_ids=list(observation_ids),
-        observation_count=initial_frame_count,
+        supports=1,
+        contradicts=0,
     )
+    belief.update_status()
     belief.history.append(BeliefSnapshot(
         iteration=ctx.deps.world_state.loop_iteration,
-        prior=0.5,
-        likelihood=0.5,
-        posterior=0.5,
-        observation_count=initial_frame_count,
-        status="proposed",
+        verdict="supports",
         reasoning="Initial proposal.",
         observation_ids=list(observation_ids),
     ))
@@ -336,27 +331,24 @@ async def propose_hypothesis(
     ctx.deps.push_state_cb()
     ctx.deps.save_checkpoint_cb()
     log.info("Hypothesis proposed: %s — %s", hypothesis_id, description)
-    return f"Hypothesis '{hypothesis_id}' added with initial confidence 0.50."
+    return f"Hypothesis '{hypothesis_id}' added (confidence {belief.confidence:.0%})."
 
 
 @scientist_agent.tool
-async def update_belief(
+async def judge_belief(
     ctx: RunContext[AgentDeps],
     hypothesis_id: str,
-    posterior: float,
-    likelihood: float,
+    verdict: str,
     reasoning: str,
     observation_ids: list[str],
 ) -> str:
-    """Revise your confidence in an existing hypothesis based on new observations.
+    """Judge whether new observations support or contradict an existing hypothesis.
 
     Args:
-        hypothesis_id: The ID of the hypothesis to update.
-        posterior: Your updated confidence score (0.0–1.0).
-                   Use values above 0.8 only with strong, repeated evidence.
-        likelihood: How well the observations match this hypothesis (0.0–1.0).
-        reasoning: Brief explanation for why you are changing the score.
-        observation_ids: IDs of stored observations used in this update.
+        hypothesis_id: The ID of the hypothesis to judge.
+        verdict: One of "supports", "contradicts", or "neutral".
+        reasoning: Brief explanation for your verdict.
+        observation_ids: IDs of stored observations informing this judgment.
                          Call record_observation first if you haven't already.
     """
     await ctx.deps.paused_event.wait()
@@ -367,38 +359,30 @@ async def update_belief(
     if not belief:
         return f"No hypothesis found with id '{hypothesis_id}'. Call propose_hypothesis first."
 
+    # Validate verdict
+    if verdict not in ("supports", "contradicts", "neutral"):
+        return f"Invalid verdict '{verdict}'. Must be 'supports', 'contradicts', or 'neutral'."
+
     # Validate observation IDs
     unknown = [oid for oid in observation_ids if not ctx.deps.world_state.get_observation(oid)]
     if unknown:
         return f"Unknown observation IDs: {unknown}. Call record_observation first."
 
-    belief.prior = belief.posterior
-    belief.posterior = max(0.0, min(1.0, posterior))
-    belief.likelihood = max(0.0, min(1.0, likelihood))
+    # Apply verdict
+    if verdict == "supports":
+        belief.supports += 1
+    elif verdict == "contradicts":
+        belief.contradicts += 1
+    # neutral: no counter change
+
     belief.last_updated = time.time()
-
-    # Add new observation IDs and count frames
-    new_ids = [oid for oid in observation_ids if oid not in belief.observation_ids]
-    belief.observation_ids.extend(new_ids)
-    new_frame_count = sum(
-        len(ctx.deps.world_state.get_observation(oid).frame_ids)
-        for oid in new_ids
-        if ctx.deps.world_state.get_observation(oid)
-    )
-    belief.observation_count += new_frame_count
-
     belief.update_status()
 
     ctx.deps.world_state.loop_iteration += 1
-    ctx.deps.world_state.last_belief_update = time.time()
 
     belief.history.append(BeliefSnapshot(
         iteration=ctx.deps.world_state.loop_iteration,
-        prior=belief.prior,
-        likelihood=belief.likelihood,
-        posterior=belief.posterior,
-        observation_count=belief.observation_count,
-        status=belief.status,
+        verdict=verdict,
         reasoning=reasoning,
         observation_ids=list(observation_ids),
     ))
@@ -406,36 +390,44 @@ async def update_belief(
     ctx.deps.world_state.upsert_belief(belief)
     ctx.deps.push_state_cb()
     ctx.deps.save_checkpoint_cb()
+
+    symbol = {"supports": "+", "contradicts": "-", "neutral": "~"}[verdict]
     log.info(
-        "Belief updated: %s → posterior=%.2f, status=%s",
-        hypothesis_id,
-        belief.posterior,
-        belief.status,
+        "Belief judged: %s [%s] → confidence=%.0f%%, status=%s",
+        hypothesis_id, symbol, belief.confidence * 100, belief.status,
     )
     return (
-        f"Belief '{hypothesis_id}' updated: posterior={belief.posterior:.2f}, "
-        f"status={belief.status}."
+        f"Belief '{hypothesis_id}' [{symbol}]: confidence={belief.confidence:.0%}, "
+        f"+{belief.supports}/-{belief.contradicts}, status={belief.status}."
     )
 
 
 @scientist_agent.tool
 async def get_current_beliefs(ctx: RunContext[AgentDeps]) -> str:
-    """Review all current hypotheses and their confidence scores.
+    """Review all current hypotheses, their verdicts, and confidence scores.
 
-    Call this to remind yourself of what you have already proposed before
-    deciding whether to add new hypotheses or revise existing ones.
+    Call this to see what you have already proposed before deciding whether
+    to add new hypotheses or judge existing ones with new evidence.
     """
-    beliefs = ctx.deps.world_state.beliefs
-    if not beliefs:
-        return "No hypotheses proposed yet."
+    ws = ctx.deps.world_state
 
-    lines = [f"Current beliefs ({len(beliefs)} total, sorted by confidence):"]
-    for b in sorted(beliefs, key=lambda b: b.posterior, reverse=True):
-        obs_list = ", ".join(b.observation_ids) if b.observation_ids else "none"
+    lines = []
+
+    if ws.entities:
+        lines.append(f"Known entities: {', '.join(ws.entities)}")
+        lines.append("")
+
+    beliefs = ws.beliefs
+    if not beliefs:
+        lines.append("No hypotheses proposed yet.")
+        return "\n".join(lines)
+
+    lines.append(f"Current beliefs ({len(beliefs)} total, sorted by confidence):")
+    for b in sorted(beliefs, key=lambda b: b.confidence, reverse=True):
         lines.append(
             f"  [{b.hypothesis.id}] {b.hypothesis.subject} {b.hypothesis.predicate} "
             f"{b.hypothesis.object_}: \"{b.hypothesis.description}\" "
-            f"(posterior={b.posterior:.2f}, observation_frames={b.observation_count}, "
-            f"status={b.status}, observations=[{obs_list}])"
+            f"(confidence={b.confidence:.0%}, +{b.supports}/-{b.contradicts}, "
+            f"status={b.status})"
         )
     return "\n".join(lines)

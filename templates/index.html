@@ -722,6 +722,16 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    .entity-tag {
+      display: inline-block;
+      background: #1a1a2e;
+      color: #7af;
+      font-size: 9px;
+      padding: 1px 5px;
+      border-radius: 3px;
+      margin-right: 3px;
+      border: 1px solid #2a2a4a;
+    }
     .observation-frame-count {
       color: #446;
       font-size: 10px;
@@ -1450,10 +1460,7 @@
           <span class="pred-legend-line" style="background:#446;opacity:0.8"></span>relationship
         </div>
         <div class="pred-legend-item" style="color:#445">
-          <span style="display:inline-block;width:16px;height:2px;background:#446;border-radius:1px;margin-right:2px;vertical-align:middle;border-top:2px dashed #446;height:0"></span>prior
-        </div>
-        <div class="pred-legend-item" style="color:#445">
-          <span style="display:inline-block;width:16px;height:2px;background:#7af;border-radius:1px;margin-right:2px;vertical-align:middle"></span>posterior
+          <span style="display:inline-block;width:16px;height:2px;background:#7af;border-radius:1px;margin-right:2px;vertical-align:middle"></span>confidence
         </div>`;
 
       window.addEventListener('resize', () => {
@@ -1548,11 +1555,8 @@
       // Hit area (wider invisible line for easier hovering)
       linkEnter.append('line').attr('class', 'bbn-edge-hit')
         .attr('stroke', 'transparent').attr('stroke-width', 14);
-      // Prior bar
-      linkEnter.append('rect').attr('class', 'bbn-bar-prior')
-        .attr('height', 3).attr('rx', 1);
-      // Posterior bar
-      linkEnter.append('rect').attr('class', 'bbn-bar-post')
+      // Confidence bar
+      linkEnter.append('rect').attr('class', 'bbn-bar-conf')
         .attr('height', 3).attr('rx', 1);
 
       const linkMerge = linkEnter.merge(linkSel);
@@ -1560,8 +1564,8 @@
       linkMerge.select('.bbn-edge-line')
         .attr('marker-end', d => `url(#arrow-${d.belief.predicate})`)
         .attr('stroke', d => nodeColor(d.belief.predicate))
-        .attr('stroke-width', d => 1 + d.belief.posterior * 3.5 + Math.min(d.belief.observation_count, 10) * 0.2)
-        .attr('stroke-opacity', d => d.belief.status === 'refuted' ? 0.15 : 0.3 + d.belief.posterior * 0.7)
+        .attr('stroke-width', d => 1 + d.belief.confidence * 3.5)
+        .attr('stroke-opacity', d => d.belief.status === 'refuted' ? 0.15 : 0.3 + d.belief.confidence * 0.7)
         .attr('stroke-dasharray', d => d.belief.status === 'refuted' ? '4,4' : null)
         .attr('fill', 'none');
 
@@ -1665,21 +1669,15 @@
         g.select('.bbn-edge-line').attr('x1', x1).attr('y1', y1).attr('x2', x2).attr('y2', y2);
         g.select('.bbn-edge-hit').attr('x1', x1).attr('y1', y1).attr('x2', x2).attr('y2', y2);
 
-        // Bayesian update bars at midpoint
+        // Confidence bar at midpoint
         const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
         const BAR_W = 24;
-        const priorW = Math.max(1, d.belief.prior * BAR_W);
-        const postW = Math.max(1, d.belief.posterior * BAR_W);
+        const confW = Math.max(1, d.belief.confidence * BAR_W);
         const predColor = nodeColor(d.belief.predicate);
 
-        g.select('.bbn-bar-prior')
-          .attr('x', mx - BAR_W / 2).attr('y', my - 5)
-          .attr('width', priorW)
-          .attr('fill', '#334').attr('opacity', 0.7);
-
-        g.select('.bbn-bar-post')
-          .attr('x', mx - BAR_W / 2).attr('y', my - 1)
-          .attr('width', postW)
+        g.select('.bbn-bar-conf')
+          .attr('x', mx - BAR_W / 2).attr('y', my - 3)
+          .attr('width', confW)
           .attr('fill', predColor).attr('opacity', 0.85);
       });
 
@@ -1765,13 +1763,13 @@
 
           g.select('.bbn-edge-line')
             .attr('stroke-opacity', isActive
-              ? (d.belief.status === 'refuted' ? 0.2 : 0.4 + d.belief.posterior * 0.6)
-              : (activeId ? 0.06 : (d.belief.status === 'refuted' ? 0.15 : 0.3 + d.belief.posterior * 0.7)))
+              ? (d.belief.status === 'refuted' ? 0.2 : 0.4 + d.belief.confidence * 0.6)
+              : (activeId ? 0.06 : (d.belief.status === 'refuted' ? 0.15 : 0.3 + d.belief.confidence * 0.7)))
             .attr('stroke-width', isActive && activeId
-              ? 2 + d.belief.posterior * 4 + Math.min(d.belief.observation_count, 10) * 0.3
-              : 1 + d.belief.posterior * 3.5 + Math.min(d.belief.observation_count, 10) * 0.2);
+              ? 2 + d.belief.confidence * 4
+              : 1 + d.belief.confidence * 3.5);
 
-          g.selectAll('.bbn-bar-prior, .bbn-bar-post')
+          g.select('.bbn-bar-conf')
             .attr('opacity', isActive ? 0.9 : (activeId ? 0.1 : 0.7));
         });
 
@@ -1850,22 +1848,12 @@
           <span style="color:${objColor}">${escapeHtml(b.object)}</span>
         </div>
         <div class="tt-bar-row">
-          <span class="tt-bar-label">Prior</span>
-          ${bar(b.prior, '#446')}
-          <span class="tt-bar-val">${(b.prior * 100).toFixed(0)}%</span>
-        </div>
-        <div class="tt-bar-row">
-          <span class="tt-bar-label">Likelihood</span>
-          ${bar(b.likelihood, '#668')}
-          <span class="tt-bar-val">${(b.likelihood * 100).toFixed(0)}%</span>
-        </div>
-        <div class="tt-bar-row">
-          <span class="tt-bar-label">Posterior</span>
-          ${bar(b.posterior, predColor)}
-          <span class="tt-bar-val">${(b.posterior * 100).toFixed(0)}%</span>
+          <span class="tt-bar-label">Confidence</span>
+          ${bar(b.confidence, predColor)}
+          <span class="tt-bar-val">${Math.round(b.confidence * 100)}%</span>
         </div>
         <div class="tt-meta">
-          ${b.observation_count} frame(s) observed &middot; ${b.status}
+          +${b.supports} / -${b.contradicts} &middot; ${b.status}
         </div>
       `;
       tooltip.style.display = 'block';
@@ -1898,7 +1886,7 @@
     }
 
     // =========================================================================
-    // POSTERIOR EVOLUTION TIMELINE
+    // CONFIDENCE EVOLUTION TIMELINE
     // =========================================================================
 
     let timelineSvg = null;
@@ -1964,7 +1952,7 @@
       const refG = timelineSvg.select('.tl-ref-lines');
       refG.selectAll('*').remove();
 
-      [{ y: 0.85, label: 'confident', color: '#2a4a2a' }, { y: 0.2, label: 'refuted', color: '#4a2a2a' }].forEach(ref => {
+      [{ y: 0.8, label: 'confident', color: '#2a4a2a' }, { y: 0.25, label: 'refuted', color: '#4a2a2a' }].forEach(ref => {
         const yPos = tlMargin.top + yScale(ref.y);
         refG.append('line')
           .attr('x1', tlMargin.left).attr('x2', tlMargin.left + iw)
@@ -1977,14 +1965,25 @@
           .text(ref.label);
       });
 
+      // Compute running confidence from verdict history for each belief
+      function computeConfidenceHistory(belief) {
+        let sup = 0, con = 0;
+        return belief.history.map(s => {
+          if (s.verdict === 'supports') sup++;
+          else if (s.verdict === 'contradicts') con++;
+          return { iteration: s.iteration, confidence: (sup + 1) / (sup + con + 2) };
+        });
+      }
+
       // Lines
       const lineGen = d3.line()
         .x(d => tlMargin.left + xScale(d.iteration))
-        .y(d => tlMargin.top + yScale(d.posterior))
+        .y(d => tlMargin.top + yScale(d.confidence))
         .curve(d3.curveMonotoneX);
 
       const linesG = timelineSvg.select('.tl-lines');
-      const lineSel = linesG.selectAll('.tl-line').data(withHistory, d => d.id);
+      const lineData = withHistory.map(b => ({ ...b, confHistory: computeConfidenceHistory(b) }));
+      const lineSel = linesG.selectAll('.tl-line').data(lineData, d => d.id);
 
       lineSel.enter().append('path')
         .attr('class', 'tl-line')
@@ -1992,7 +1991,7 @@
         .attr('stroke-width', 1.5)
         .attr('stroke-linecap', 'round')
         .merge(lineSel)
-        .attr('d', d => lineGen(d.history))
+        .attr('d', d => lineGen(d.confHistory))
         .attr('stroke', d => nodeColor(d.predicate))
         .attr('stroke-dasharray', d => d.status === 'refuted' ? '3,3' : null)
         .attr('data-id', d => d.id);
@@ -2002,8 +2001,8 @@
       // Dots at each data point
       const dotsG = timelineSvg.select('.tl-dots');
       const allPoints = [];
-      withHistory.forEach(b => {
-        b.history.forEach(s => {
+      lineData.forEach(b => {
+        b.confHistory.forEach(s => {
           allPoints.push({ beliefId: b.id, predicate: b.predicate, ...s });
         });
       });
@@ -2015,7 +2014,7 @@
         .attr('r', 2.5)
         .merge(dotSel)
         .attr('cx', d => tlMargin.left + xScale(d.iteration))
-        .attr('cy', d => tlMargin.top + yScale(d.posterior))
+        .attr('cy', d => tlMargin.top + yScale(d.confidence))
         .attr('fill', d => nodeColor(d.predicate))
         .attr('data-id', d => d.beliefId);
 
@@ -2198,7 +2197,7 @@
       }
 
       container.innerHTML = state.beliefs.map(b => {
-        const pct = Math.round(b.posterior * 100);
+        const pct = Math.round(b.confidence * 100);
         const edgeColor = nodeColor(b.predicate);
         const isSelected = (selectedBeliefId === b.id) ? ' highlighted' : '';
         return `
@@ -2213,8 +2212,7 @@
             <span style="color:${nodeColor(b.object)}">${escapeHtml(b.object)}</span>
           </div>
           <div class="belief-meta">
-            ${b.observation_count} observation(s) &middot;
-            P: ${(b.prior * 100).toFixed(0)}% &rarr; ${pct}%
+            +${b.supports} / -${b.contradicts}
             <span class="status-badge ${b.status}">${b.status}</span>
           </div>
           <div class="belief-score">
@@ -2274,7 +2272,8 @@
         html += `    <span class="observation-toggle-arrow${isFirst ? ' open' : ''}" id="${pid}-arrow">&#9654;</span>`;
         html += `    <span class="observation-id">${safeid}</span>`;
         html += `    <span class="observation-desc" title="${escapeHtml(obs.description)}">${escapeHtml(obs.description)}</span>`;
-        html += `    <span class="observation-frame-count">${obs.frame_ids.length} frame${obs.frame_ids.length !== 1 ? 's' : ''}</span>`;
+        const entTags = (obs.entities || []).map(e => `<span class="entity-tag">${escapeHtml(e)}</span>`).join('');
+        html += `    <span class="observation-frame-count">${entTags}${obs.frame_ids.length} frame${obs.frame_ids.length !== 1 ? 's' : ''}</span>`;
         html += `  </div>`;
         html += `  <div class="observation-player${isFirst ? ' open' : ''}" id="${pid}-player">`;
         if (obs.frame_ids.length > 0) {
@@ -2363,61 +2362,41 @@
       </div>`;
       html += `<div class="modal-desc">${escapeHtml(b.description)}</div>`;
 
-      // Bayesian scores
-      html += `<div class="modal-section-title">Bayesian Scores</div>`;
+      // Confidence
+      html += `<div class="modal-section-title">Confidence</div>`;
       html += `<div class="modal-bars">`;
-      html += modalBar('Prior', b.prior, '#446');
-      html += modalBar('Likelihood', b.likelihood, '#668');
-      html += modalBar('Posterior', b.posterior, predColor);
+      html += modalBar('Confidence', b.confidence, predColor);
       html += `</div>`;
       html += `<div class="modal-status-row">
-        <span>${b.observation_count} observation(s)</span>
+        <span>+${b.supports} / -${b.contradicts}</span>
         <span class="status-badge ${b.status}">${b.status}</span>
       </div>`;
 
-      // Origin reasoning
-      if (b.origin_reasoning) {
-        html += `<div class="modal-section-title">Hypothesis Reasoning</div>`;
-        html += `<div class="modal-reasoning">${escapeHtml(b.origin_reasoning)}</div>`;
-      }
-
-      // History chart + table
+      // Verdict history
       if (b.history && b.history.length > 0) {
-        html += `<div class="modal-section-title">Belief Evolution</div>`;
+        html += `<div class="modal-section-title">Verdict History</div>`;
         html += `<svg class="modal-history-chart" id="modal-chart"></svg>`;
 
         // History table
         html += `<table class="modal-history-table">
           <thead><tr>
-            <th>Iter</th><th>Prior</th><th>Likelihood</th><th>Posterior</th><th>Evidence</th><th>Status</th>
+            <th>Iter</th><th>Verdict</th><th>Reasoning</th>
           </tr></thead><tbody>`;
         b.history.forEach(s => {
+          const symbol = s.verdict === 'supports' ? '+' : s.verdict === 'contradicts' ? '-' : '~';
+          const verdictColor = s.verdict === 'supports' ? '#4a8' : s.verdict === 'contradicts' ? '#a44' : '#668';
           html += `<tr>
             <td>${s.iteration}</td>
-            <td>${(s.prior * 100).toFixed(0)}%</td>
-            <td>${(s.likelihood * 100).toFixed(0)}%</td>
-            <td>${(s.posterior * 100).toFixed(0)}%</td>
-            <td>${s.observation_count}</td>
-            <td><span class="status-badge ${s.status}">${s.status}</span></td>
+            <td><span style="color:${verdictColor};font-weight:bold">${symbol}</span></td>
+            <td style="color:#889;font-size:11px">${escapeHtml(s.reasoning || '')}</td>
           </tr>`;
         });
         html += `</tbody></table>`;
-
-        // Per-iteration reasoning (show latest that has reasoning)
-        const withReasoning = b.history.filter(s => s.reasoning);
-        if (withReasoning.length > 0) {
-          const latest = withReasoning[withReasoning.length - 1];
-          html += `<div class="modal-section-title">Latest Update Reasoning (iteration ${latest.iteration})</div>`;
-          html += `<div class="modal-reasoning">${escapeHtml(latest.reasoning)}</div>`;
-        }
       }
 
-      // Observations section — one card per observation bundle referenced by this belief
+      // Observations section — collect from verdict history
       const observationMap = (tab.lastState && tab.lastState.observations) || {};
-      const beliefObservationIds = b.observation_ids || [];
-
-      // Also collect observation IDs from history snapshots (may have more)
-      const allObservationIds = new Set(beliefObservationIds);
+      const allObservationIds = new Set();
       if (b.history) {
         b.history.forEach(s => { if (s.observation_ids) s.observation_ids.forEach(id => allObservationIds.add(id)); });
       }
@@ -2469,7 +2448,7 @@
         .selectAll('text,line,path').attr('stroke', '#334').attr('fill', '#556').style('font-size', '9px');
 
       // Reference lines
-      [0.85, 0.2].forEach(ref => {
+      [0.8, 0.25].forEach(ref => {
         g.append('line')
           .attr('x1', 0).attr('x2', iw)
           .attr('y1', y(ref)).attr('y2', y(ref))
@@ -2479,38 +2458,32 @@
 
       const predColor = nodeColor(b.predicate);
 
-      // Prior line (grey)
-      const priorLine = d3.line().x(d => x(d.iteration)).y(d => y(d.prior)).curve(d3.curveMonotoneX);
-      g.append('path').datum(b.history)
-        .attr('d', priorLine).attr('fill', 'none')
-        .attr('stroke', '#446').attr('stroke-width', 1).attr('stroke-dasharray', '3,2');
+      // Compute running confidence from verdict history
+      let sup = 0, con = 0;
+      const confData = b.history.map(s => {
+        if (s.verdict === 'supports') sup++;
+        else if (s.verdict === 'contradicts') con++;
+        return { iteration: s.iteration, confidence: (sup + 1) / (sup + con + 2) };
+      });
 
-      // Posterior line (colored)
-      const postLine = d3.line().x(d => x(d.iteration)).y(d => y(d.posterior)).curve(d3.curveMonotoneX);
-      g.append('path').datum(b.history)
-        .attr('d', postLine).attr('fill', 'none')
+      // Confidence line
+      const confLine = d3.line().x(d => x(d.iteration)).y(d => y(d.confidence)).curve(d3.curveMonotoneX);
+      g.append('path').datum(confData)
+        .attr('d', confLine).attr('fill', 'none')
         .attr('stroke', predColor).attr('stroke-width', 2);
 
       // Dots
-      g.selectAll('.dot-prior').data(b.history).enter()
-        .append('circle').attr('r', 2.5)
-        .attr('cx', d => x(d.iteration)).attr('cy', d => y(d.prior))
-        .attr('fill', '#446');
-      g.selectAll('.dot-post').data(b.history).enter()
+      g.selectAll('.dot-conf').data(confData).enter()
         .append('circle').attr('r', 3)
-        .attr('cx', d => x(d.iteration)).attr('cy', d => y(d.posterior))
+        .attr('cx', d => x(d.iteration)).attr('cy', d => y(d.confidence))
         .attr('fill', predColor);
 
       // Legend
       const legendG = svg.append('g').attr('transform', `translate(${m.left + 4}, ${m.top})`);
       legendG.append('line').attr('x1', 0).attr('x2', 14).attr('y1', 0).attr('y2', 0)
-        .attr('stroke', '#446').attr('stroke-width', 1).attr('stroke-dasharray', '3,2');
-      legendG.append('text').attr('x', 18).attr('y', 3).attr('fill', '#556')
-        .attr('font-size', '8px').attr('font-family', 'Courier New').text('prior');
-      legendG.append('line').attr('x1', 50).attr('x2', 64).attr('y1', 0).attr('y2', 0)
         .attr('stroke', predColor).attr('stroke-width', 2);
-      legendG.append('text').attr('x', 68).attr('y', 3).attr('fill', '#556')
-        .attr('font-size', '8px').attr('font-family', 'Courier New').text('posterior');
+      legendG.append('text').attr('x', 18).attr('y', 3).attr('fill', '#556')
+        .attr('font-size', '8px').attr('font-family', 'Courier New').text('confidence');
     }
 
     function closeModal() {
