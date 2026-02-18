@@ -11,7 +11,12 @@ from dataclasses import dataclass
 from typing import Callable
 
 from pydantic_ai import Agent, BinaryContent, RunContext
-from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ToolReturnPart,
+    UserPromptPart,
+)
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -50,6 +55,10 @@ class AgentDeps:
 # -- History processor: cap images sent to the model -------------------------
 
 
+def _is_image(obj: object) -> bool:
+    return isinstance(obj, BinaryContent) and obj.media_type.startswith("image/")
+
+
 def _cap_images(messages: list[ModelMessage]) -> list[ModelMessage]:
     """Drop older images so the context stays under MAX_CONTEXT_IMAGES.
 
@@ -57,10 +66,14 @@ def _cap_images(messages: list[ModelMessage]) -> list[ModelMessage]:
     Once the budget is exhausted, any remaining BinaryContent with an image
     media type is replaced with a short text placeholder so the model still
     sees the frame IDs and text but not the raw pixels.
+
+    Images can appear in:
+      - ToolReturnPart.content (list or single value)
+      - UserPromptPart.content (sequence — pydantic_ai moves BinaryContent
+        from tool returns into a UserPromptPart for the model)
     """
     # First pass (reverse): locate every image and decide which to keep.
-    # We track (msg_index, part_index, item_index_in_content) for tool returns
-    # whose content is a list, or (msg_index, part_index, None) for simple content.
+    # Each entry: (msg_index, part_index, item_index_in_content | None)
     budget = MAX_CONTEXT_IMAGES
     to_strip: list[tuple[int, int, int | None]] = []
 
@@ -70,22 +83,21 @@ def _cap_images(messages: list[ModelMessage]) -> list[ModelMessage]:
             continue
         for pi in range(len(msg.parts) - 1, -1, -1):
             part = msg.parts[pi]
-            if not isinstance(part, ToolReturnPart):
-                continue
-            content = part.content
-            if isinstance(content, list):
-                for ii in range(len(content) - 1, -1, -1):
-                    item = content[ii]
-                    if isinstance(item, BinaryContent) and item.media_type.startswith("image/"):
-                        if budget > 0:
-                            budget -= 1
-                        else:
-                            to_strip.append((mi, pi, ii))
-            elif isinstance(content, BinaryContent) and content.media_type.startswith("image/"):
-                if budget > 0:
-                    budget -= 1
-                else:
-                    to_strip.append((mi, pi, None))
+
+            if isinstance(part, (ToolReturnPart, UserPromptPart)):
+                content = part.content
+                if isinstance(content, (list, tuple)):
+                    for ii in range(len(content) - 1, -1, -1):
+                        if _is_image(content[ii]):
+                            if budget > 0:
+                                budget -= 1
+                            else:
+                                to_strip.append((mi, pi, ii))
+                elif _is_image(content):
+                    if budget > 0:
+                        budget -= 1
+                    else:
+                        to_strip.append((mi, pi, None))
 
     if not to_strip:
         return messages
@@ -94,6 +106,7 @@ def _cap_images(messages: list[ModelMessage]) -> list[ModelMessage]:
     messages = list(messages)
     copied_msgs: set[int] = set()
     copied_parts: set[tuple[int, int]] = set()
+    placeholder = "[image removed from context]"
 
     for mi, pi, ii in to_strip:
         if mi not in copied_msgs:
@@ -110,18 +123,16 @@ def _cap_images(messages: list[ModelMessage]) -> list[ModelMessage]:
         if (mi, pi) not in copied_parts:
             msg.parts[pi] = copy.copy(msg.parts[pi])
             part = msg.parts[pi]
-            assert isinstance(part, ToolReturnPart)
-            if isinstance(part.content, list):
+            if isinstance(part.content, (list, tuple)):
                 part.content = list(part.content)
             copied_parts.add((mi, pi))
 
         part = msg.parts[pi]
-        assert isinstance(part, ToolReturnPart)
 
         if ii is not None and isinstance(part.content, list):
-            part.content[ii] = "[image removed from context]"
+            part.content[ii] = placeholder
         else:
-            part.content = "[image removed from context]"
+            part.content = placeholder
 
     stripped = len(to_strip)
     log.info("History processor: stripped %d old image(s), keeping %d", stripped, MAX_CONTEXT_IMAGES)
