@@ -1606,7 +1606,7 @@
       nodeMerge.select('.bbn-node-dot')
         .attr('fill', d => d.color);
       nodeMerge.select('.bbn-node-label')
-        .text('').attr('fill', '#c8c8d0');
+        .text(d => d.id).attr('fill', '#c8c8d0');
 
       nodeSel.exit().remove();
     }
