@@ -17,7 +17,7 @@ ALLOWED_EMAILS = {
     if e.strip()
 }
 APP_URL = os.environ.get("APP_URL", "http://localhost:8001")
-FROM_EMAIL = os.environ.get("FROM_EMAIL", "Bayz <noreply@bayz.app>")
+FROM_EMAIL = os.environ.get("FROM_EMAIL") or os.environ.get("EMAIL_FROM", "Bayz <noreply@bayz.app>")
 
 _serializer = URLSafeTimedSerializer(SECRET_KEY, salt="magic-link")
 
