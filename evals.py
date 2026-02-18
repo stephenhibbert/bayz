@@ -7,16 +7,6 @@ import logging
 import os
 import sys
 
-import logfire
-from dotenv import load_dotenv
-
-load_dotenv()
-logfire.configure(
-    service_name="bayz-evals",
-    environment=os.environ.get("RAILWAY_ENVIRONMENT", "development"),
-)
-logfire.instrument_pydantic_ai()
-
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import LLMJudge
 from pydantic_evals.evaluators.llm_as_a_judge import judge_output
@@ -162,6 +152,16 @@ async def run_evals():
 
 
 if __name__ == "__main__":
+    import logfire
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    logfire.configure(
+        service_name="bayz-evals",
+        environment=os.environ.get("RAILWAY_ENVIRONMENT", "development"),
+    )
+    logfire.instrument_pydantic_ai()
+
     if len(sys.argv) > 1:
         DEFAULT_TARGET_ITERATIONS = int(sys.argv[1])
     asyncio.run(run_evals())

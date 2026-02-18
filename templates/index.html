@@ -1559,7 +1559,7 @@
       labelMerge
         .attr('fill', d => PREDICATE_COLORS[d.belief.predicate] || '#446')
         .attr('opacity', d => d.belief.status === 'refuted' ? 0.3 : 0.75)
-        .text(d => `${d.belief.predicate} ${Math.round(d.belief.posterior * 100)}%`);
+        .text(d => d.belief.predicate);
 
       labelSel.exit().remove();
 
@@ -1593,7 +1593,7 @@
       nodeMerge.select('.bbn-node-dot')
         .attr('fill', d => d.color);
       nodeMerge.select('.bbn-node-label')
-        .text(d => d.id).attr('fill', '#c8c8d0');
+        .text('').attr('fill', '#c8c8d0');
 
       nodeSel.exit().remove();
     }

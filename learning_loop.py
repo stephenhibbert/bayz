@@ -16,8 +16,10 @@ from simulator import Simulator
 
 log = logging.getLogger(__name__)
 
-CHECKPOINT_DIR = Path(__file__).parent / "checkpoints"
-FRAMES_DIR = Path(__file__).parent / "frames"
+import os as _os
+_data_root = Path(_os.environ.get("DATA_DIR", Path(__file__).parent))
+CHECKPOINT_DIR = _data_root / "checkpoints"
+FRAMES_DIR = _data_root / "frames"
 
 SIM_DT = 1.0 / 30
 FRAME_BROADCAST_INTERVAL = 0.1  # 10 fps to UI
