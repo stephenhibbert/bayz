@@ -171,15 +171,15 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 # -- App -----------------------------------------------------------------------
 
 app = FastAPI(title="Bayz", lifespan=lifespan)
-app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 logfire.instrument_fastapi(app, excluded_urls="/api/status,/api/frames")
 
 
 # -- Auth middleware -----------------------------------------------------------
+# Order matters: SessionMiddleware must be outermost (added last) so it runs
+# before the auth check and populates request.session.
 
 
-@app.middleware("http")
-async def require_auth(request: Request, call_next):
+async def _require_auth(request: Request, call_next):
     """Redirect unauthenticated requests to the login page."""
     path = request.url.path
     if path.startswith("/auth") or path == "/health":
@@ -187,6 +187,12 @@ async def require_auth(request: Request, call_next):
     if not request.session.get("email"):
         return RedirectResponse(url="/auth/login", status_code=302)
     return await call_next(request)
+
+
+from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
+
+app.add_middleware(BaseHTTPMiddleware, dispatch=_require_auth)
+app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 
 
 # -- Health --------------------------------------------------------------------
