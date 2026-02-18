@@ -179,6 +179,8 @@
       padding: 10px 12px;
       flex-shrink: 0;
       display: none;
+      max-height: 220px;
+      overflow-y: auto;
     }
     .eval-result.visible { display: block; }
     .eval-result-header {
@@ -2385,7 +2387,7 @@
       let maxIter = 1;
       b.history.forEach(s => { if (s.iteration > maxIter) maxIter = s.iteration; });
 
-      const x = d3.scaleLinear().domain([1, Math.max(maxIter, 2)]).range([0, iw]);
+      const x = d3.scaleLinear().domain([0, Math.max(maxIter, 2)]).range([0, iw]);
       const y = d3.scaleLinear().domain([0, 1]).range([ih, 0]);
 
       const g = svg.append('g').attr('transform', `translate(${m.left},${m.top})`);
