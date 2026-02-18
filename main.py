@@ -179,8 +179,13 @@ logfire.instrument_fastapi(app, excluded_urls="/api/status,/api/frames")
 # before the auth check and populates request.session.
 
 
+_AUTH_ENABLED = bool(os.environ.get("RAILWAY_ENVIRONMENT"))
+
+
 async def _require_auth(request: Request, call_next):
-    """Redirect unauthenticated requests to the login page."""
+    """Redirect unauthenticated requests to the login page. Skipped in local dev."""
+    if not _AUTH_ENABLED:
+        return await call_next(request)
     path = request.url.path
     if path.startswith("/auth") or path == "/health":
         return await call_next(request)
