@@ -924,13 +924,6 @@
 
   <script>
     // -- Constants ---------------------------------------------------------------
-    const PREDICATE_COLORS = {
-      chases:   '#e06030',
-      flees:    '#30a0e0',
-      attracts: '#d0c020',
-      ignores:  '#445566',
-      feeds_on: '#30d060',
-    };
 
     // Deterministic palette for agent-discovered node labels.
     // Colors are assigned by hashing the label — no prior knowledge of entity types needed.
@@ -1383,32 +1376,27 @@
       const svg = d3.select('#bbn-svg');
       svgRoot = svg;
 
-      // Arrowhead markers per predicate
-      const defs = svg.append('defs');
-      Object.entries(PREDICATE_COLORS).forEach(([pred, color]) => {
-        defs.append('marker')
-          .attr('id', `arrow-${pred}`)
-          .attr('viewBox', '0 -4 8 8')
-          .attr('refX', 22)
-          .attr('markerWidth', 6)
-          .attr('markerHeight', 6)
-          .attr('orient', 'auto')
-          .append('path')
-          .attr('d', 'M0,-4L8,0L0,4')
-          .attr('fill', color);
-        // Dim version for non-hovered state
-        defs.append('marker')
-          .attr('id', `arrow-dim-${pred}`)
-          .attr('viewBox', '0 -4 8 8')
-          .attr('refX', 22)
-          .attr('markerWidth', 6)
-          .attr('markerHeight', 6)
-          .attr('orient', 'auto')
-          .append('path')
-          .attr('d', 'M0,-4L8,0L0,4')
-          .attr('fill', color)
-          .attr('opacity', 0.2);
-      });
+      // Arrowhead markers — created lazily per discovered predicate
+      svg.append('defs').attr('class', 'arrow-defs');
+
+      function ensureArrowMarkers(predicates) {
+        const defs = svgRoot.select('defs.arrow-defs');
+        predicates.forEach(pred => {
+          if (defs.select(`#arrow-${pred}`).empty()) {
+            const color = nodeColor(pred);
+            defs.append('marker')
+              .attr('id', `arrow-${pred}`)
+              .attr('viewBox', '0 -4 8 8').attr('refX', 22)
+              .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
+              .append('path').attr('d', 'M0,-4L8,0L0,4').attr('fill', color);
+            defs.append('marker')
+              .attr('id', `arrow-dim-${pred}`)
+              .attr('viewBox', '0 -4 8 8').attr('refX', 22)
+              .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
+              .append('path').attr('d', 'M0,-4L8,0L0,4').attr('fill', color).attr('opacity', 0.2);
+          }
+        });
+      }
 
       // Layers
       svg.append('g').attr('class', 'links-layer');
@@ -1521,6 +1509,7 @@
     }
 
     function renderBBNElements() {
+      ensureArrowMarkers(bbnLinks.map(l => l.belief.predicate));
       // -- LINKS --
       const linkSel = svgRoot.select('.links-layer')
         .selectAll('.bbn-link')
@@ -1548,7 +1537,7 @@
 
       linkMerge.select('.bbn-edge-line')
         .attr('marker-end', d => `url(#arrow-${d.belief.predicate})`)
-        .attr('stroke', d => PREDICATE_COLORS[d.belief.predicate] || '#446')
+        .attr('stroke', d => nodeColor(d.belief.predicate))
         .attr('stroke-width', d => 1 + d.belief.posterior * 3.5 + Math.min(d.belief.evidence_count, 10) * 0.2)
         .attr('stroke-opacity', d => d.belief.status === 'refuted' ? 0.15 : 0.3 + d.belief.posterior * 0.7)
         .attr('stroke-dasharray', d => d.belief.status === 'refuted' ? '4,4' : null)
@@ -1570,7 +1559,7 @@
 
       const labelMerge = labelEnter.merge(labelSel);
       labelMerge
-        .attr('fill', d => PREDICATE_COLORS[d.belief.predicate] || '#446')
+        .attr('fill', d => nodeColor(d.belief.predicate))
         .attr('opacity', d => d.belief.status === 'refuted' ? 0.3 : 0.75)
         .text(d => d.belief.predicate);
 
@@ -1659,7 +1648,7 @@
         const BAR_W = 24;
         const priorW = Math.max(1, d.belief.prior * BAR_W);
         const postW = Math.max(1, d.belief.posterior * BAR_W);
-        const predColor = PREDICATE_COLORS[d.belief.predicate] || '#7af';
+        const predColor = nodeColor(d.belief.predicate);
 
         g.select('.bbn-bar-prior')
           .attr('x', mx - BAR_W / 2).attr('y', my - 5)
@@ -1820,7 +1809,7 @@
     function showTooltip(d) {
       const tooltip = document.getElementById('bbn-tooltip');
       const b = d.belief;
-      const predColor = PREDICATE_COLORS[b.predicate] || '#446';
+      const predColor = nodeColor(b.predicate);
       const subColor = nodeColor(b.subject);
       const objColor = nodeColor(b.object);
 
@@ -1982,7 +1971,7 @@
         .attr('stroke-linecap', 'round')
         .merge(lineSel)
         .attr('d', d => lineGen(d.history))
-        .attr('stroke', d => PREDICATE_COLORS[d.predicate] || '#446')
+        .attr('stroke', d => nodeColor(d.predicate))
         .attr('stroke-dasharray', d => d.status === 'refuted' ? '3,3' : null)
         .attr('data-id', d => d.id);
 
@@ -2005,7 +1994,7 @@
         .merge(dotSel)
         .attr('cx', d => tlMargin.left + xScale(d.iteration))
         .attr('cy', d => tlMargin.top + yScale(d.posterior))
-        .attr('fill', d => PREDICATE_COLORS[d.predicate] || '#446')
+        .attr('fill', d => nodeColor(d.predicate))
         .attr('data-id', d => d.beliefId);
 
       dotSel.exit().remove();
@@ -2178,7 +2167,7 @@
 
       container.innerHTML = state.beliefs.map(b => {
         const pct = Math.round(b.posterior * 100);
-        const edgeColor = PREDICATE_COLORS[b.predicate] || '#446';
+        const edgeColor = nodeColor(b.predicate);
         const isSelected = (selectedBeliefId === b.id) ? ' highlighted' : '';
         return `
         <div class="belief-card ${b.status}${isSelected}" data-id="${escapeHtml(b.id)}"
@@ -2239,7 +2228,7 @@
       const b = state.beliefs.find(x => x.id === beliefId);
       if (!b) return;
 
-      const predColor = PREDICATE_COLORS[b.predicate] || '#446';
+      const predColor = nodeColor(b.predicate);
       const subColor = nodeColor(b.subject);
       const objColor = nodeColor(b.object);
 
@@ -2427,7 +2416,7 @@
           .attr('stroke-dasharray', '3,3').attr('stroke-width', 1);
       });
 
-      const predColor = PREDICATE_COLORS[b.predicate] || '#7af';
+      const predColor = nodeColor(b.predicate);
 
       // Prior line (grey)
       const priorLine = d3.line().x(d => x(d.iteration)).y(d => y(d.prior)).curve(d3.curveMonotoneX);
