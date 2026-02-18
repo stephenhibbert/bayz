@@ -2059,7 +2059,7 @@
 
     let frameWs = null;
     function connectFrameWs() {
-      frameWs = new WebSocket(`ws://${location.host}/ws/frames`);
+      frameWs = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/frames`);
       frameWs.binaryType = 'arraybuffer';
       frameWs.onmessage = (evt) => {
         const blob = new Blob([evt.data], { type: 'image/png' });
@@ -2081,7 +2081,7 @@
 
     let stateWs = null;
     function connectStateWs() {
-      stateWs = new WebSocket(`ws://${location.host}/ws/state`);
+      stateWs = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/state`);
       stateWs.onopen = () => {
         document.getElementById('conn-dot').classList.add('connected');
         document.getElementById('conn-status').textContent = 'connected';
