@@ -148,13 +148,17 @@ scientist_agent = Agent(
     deps_type=AgentDeps,
     output_type=str,
     history_processors=[_cap_images],
+    model_settings={"temperature": 0.8},
     system_prompt="""\
 You are an autonomous scientific observer placed in front of a live simulation
 that you know nothing about. Your mission: figure out the rules purely through
 observation.
 
 Use your tools in this cycle:
-1. get_frames — capture frames to watch what is happening
+1. get_frames — capture frames to watch what is happening. Vary your sampling
+   strategy: try 2 frames with a long delay (3-5s) to see large-scale motion,
+   or 6-8 rapid frames (0.3s) to catch fast interactions. Don't always use the
+   same number and interval.
 2. record_observation — name and save a bundle of frames, listing the entities
    you can see. IMPORTANT: reuse entity names from the known entity list to
    avoid synonyms (e.g. always use "red" not "crimson" if "red" already exists)
@@ -164,9 +168,27 @@ Use your tools in this cycle:
    support (+), contradict (-), or are neutral to it. Give a brief reason.
 5. get_current_beliefs — review your hypotheses and their confidence scores
 
-Work like a scientist: observe, hypothesise early (after 2-3 observations),
-then gather more evidence and judge your beliefs. Propose hypotheses even when
-uncertain — early proposals are refined with more verdicts later.
+IMPORTANT GUIDELINES:
+
+Hypothesise early and boldly. After your first 1-2 observations, propose
+hypotheses for every entity pair — even speculative ones. It is BETTER to
+propose a wrong hypothesis and later contradict it than to wait for certainty.
+The system is designed for beliefs to be revised.
+
+Be a strict judge. When judging beliefs against new evidence:
+- "supports" means the observation CLEARLY and DIRECTLY shows the behaviour.
+  Mere proximity or co-occurrence is not enough — you need to see motion toward,
+  motion away, or an interaction event.
+- "neutral" is the RIGHT verdict when you cannot clearly see the behaviour in
+  the observation. Use it often — most observations are only relevant to a few
+  hypotheses. Default to neutral unless the evidence is clear.
+- "contradicts" means the observation shows behaviour INCONSISTENT with the
+  hypothesis — e.g. entities that should attract are moving apart, or entities
+  that should repel are clustering together. Don't be afraid to contradict.
+
+Think about what is MISSING from your beliefs. After judging, check: are there
+entity pairs with no hypothesis? Are there behaviours you haven't tested for
+(repulsion, fleeing, ignoring)? Propose hypotheses to fill the gaps.
 
 When you are confident you understand the key rules, return a concise summary
 of your conclusions.""",
@@ -186,10 +208,12 @@ async def get_frames(
 
     Args:
         n: Number of frames to capture (1-8).
-        delay_secs: Seconds to wait between each capture (default 1.0).
+        delay_secs: Seconds to wait between each capture (0.2-5.0).
 
-    Each frame is returned as an image you can directly examine. Request more
-    frames with a longer delay to observe motion patterns and interactions.
+    Vary your sampling strategy each time:
+    - Quick burst (6-8 frames, 0.3s) to catch fast interactions like chasing
+    - Slow sweep (2-3 frames, 3-5s) to see large-scale motion and repulsion
+    - Medium pace (4-5 frames, 1s) for general observation
     """
     await ctx.deps.paused_event.wait()
     if ctx.deps.stop_event.is_set():
@@ -314,16 +338,11 @@ async def propose_hypothesis(
         "description": description,
     })
 
-    belief = Belief(
-        hypothesis=hyp,
-        supports=1,
-        contradicts=0,
-    )
-    belief.update_status()
+    belief = Belief(hypothesis=hyp)
     belief.history.append(BeliefSnapshot(
         iteration=ctx.deps.world_state.loop_iteration,
-        verdict="supports",
-        reasoning="Initial proposal.",
+        verdict="neutral",
+        reasoning="Initial proposal — awaiting evidence.",
         observation_ids=list(observation_ids),
     ))
 
@@ -331,7 +350,10 @@ async def propose_hypothesis(
     ctx.deps.push_state_cb()
     ctx.deps.save_checkpoint_cb()
     log.info("Hypothesis proposed: %s — %s", hypothesis_id, description)
-    return f"Hypothesis '{hypothesis_id}' added (confidence {belief.confidence:.0%})."
+    return (
+        f"Hypothesis '{hypothesis_id}' added (confidence {belief.confidence:.0%}). "
+        f"Use judge_belief to support or contradict it with evidence."
+    )
 
 
 @scientist_agent.tool
