@@ -363,19 +363,19 @@ async def get_status():
         if s.id in loops:
             result[s.id] = {
                 "status": loops[s.id].status(),
-                "loop_iteration": loops[s.id].world_state.loop_iteration,
+                "verdict_count": loops[s.id].world_state.verdict_count,
                 "beliefs_count": len(loops[s.id].world_state.beliefs),
             }
         elif LearningLoop.checkpoint_exists(s.id):
             result[s.id] = {
                 "status": "checkpoint",
-                "loop_iteration": 0,
+                "verdict_count": 0,
                 "beliefs_count": 0,
             }
         else:
             result[s.id] = {
                 "status": "idle",
-                "loop_iteration": 0,
+                "verdict_count": 0,
                 "beliefs_count": 0,
             }
     return {"viewed": viewed_scenario_id, "scenarios": result}

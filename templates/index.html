@@ -343,48 +343,13 @@
       display: none;
     }
     .bbn-tooltip .tt-title {
-      color: #7af;
-      font-size: 10px;
-      margin-bottom: 4px;
-      letter-spacing: 1px;
-    }
-    .bbn-tooltip .tt-rule {
-      font-size: 12px;
-      margin-bottom: 6px;
-    }
-    .bbn-tooltip .tt-bar-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      margin: 2px 0;
-      font-size: 10px;
-    }
-    .bbn-tooltip .tt-bar-label {
-      width: 70px;
-      color: #889;
-      text-align: right;
-    }
-    .bbn-tooltip .tt-bar-track {
-      width: 80px;
-      height: 6px;
-      background: #1a1a2e;
-      border-radius: 3px;
-      overflow: hidden;
-    }
-    .bbn-tooltip .tt-bar-fill {
-      height: 100%;
-      border-radius: 3px;
-    }
-    .bbn-tooltip .tt-bar-val {
-      width: 30px;
-      color: #aab;
+      color: #c8c8d0;
+      font-size: 11px;
+      margin-bottom: 2px;
     }
     .bbn-tooltip .tt-meta {
-      color: #667;
+      color: #889;
       font-size: 10px;
-      margin-top: 4px;
-      border-top: 1px solid #1a1a2e;
-      padding-top: 4px;
     }
     /* -- Predicate legend (inline under graph) -- */
     .predicate-legend {
@@ -886,7 +851,7 @@
       <div class="legend" id="legend"></div>
       <div class="status-bar">
         <div>frames observed: <span id="stat-frames">0</span></div>
-        <div>loop: <span id="stat-loop">0</span></div>
+        <div>verdicts: <span id="stat-loop">0</span></div>
         <div>beliefs: <span id="stat-beliefs">0</span></div>
       </div>
       <div class="log-panel" id="log-panel">
@@ -1404,23 +1369,22 @@
     let simulation = null;
     let svgRoot = null;
 
-    function ensureArrowMarkers(predicates) {
+    const EDGE_COLOR = '#667';
+
+    function ensureArrowMarkers() {
       const defs = svgRoot.select('defs.arrow-defs');
-      predicates.forEach(pred => {
-        if (defs.select(`#arrow-${pred}`).empty()) {
-          const color = nodeColor(pred);
-          defs.append('marker')
-            .attr('id', `arrow-${pred}`)
-            .attr('viewBox', '0 -4 8 8').attr('refX', 22)
-            .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
-            .append('path').attr('d', 'M0,-4L8,0L0,4').attr('fill', color);
-          defs.append('marker')
-            .attr('id', `arrow-dim-${pred}`)
-            .attr('viewBox', '0 -4 8 8').attr('refX', 22)
-            .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
-            .append('path').attr('d', 'M0,-4L8,0L0,4').attr('fill', color).attr('opacity', 0.2);
-        }
-      });
+      if (defs.select('#arrow').empty()) {
+        defs.append('marker')
+          .attr('id', 'arrow')
+          .attr('viewBox', '0 -3 6 6').attr('refX', 20)
+          .attr('markerWidth', 4).attr('markerHeight', 4).attr('orient', 'auto')
+          .append('path').attr('d', 'M0,-3L6,0L0,3').attr('fill', EDGE_COLOR);
+        defs.append('marker')
+          .attr('id', 'arrow-dim')
+          .attr('viewBox', '0 -3 6 6').attr('refX', 20)
+          .attr('markerWidth', 4).attr('markerHeight', 4).attr('orient', 'auto')
+          .append('path').attr('d', 'M0,-3L6,0L0,3').attr('fill', EDGE_COLOR).attr('opacity', 0.2);
+      }
     }
 
     function initBBN() {
@@ -1454,13 +1418,10 @@
       const legendEl = document.getElementById('predicate-legend');
       legendEl.innerHTML =
         `<div class="pred-legend-item">
-          <span class="bbn-legend-node"></span>entity type
+          <span class="bbn-legend-node"></span>entity
         </div>
         <div class="pred-legend-item">
-          <span class="pred-legend-line" style="background:#446;opacity:0.8"></span>relationship
-        </div>
-        <div class="pred-legend-item" style="color:#445">
-          <span style="display:inline-block;width:16px;height:2px;background:#7af;border-radius:1px;margin-right:2px;vertical-align:middle"></span>confidence
+          <span class="pred-legend-line" style="background:${EDGE_COLOR};opacity:0.6"></span>click edge for details
         </div>`;
 
       window.addEventListener('resize', () => {
@@ -1538,7 +1499,7 @@
     }
 
     function renderBBNElements() {
-      ensureArrowMarkers(bbnLinks.map(l => l.belief.predicate));
+      ensureArrowMarkers();
       // -- LINKS --
       const linkSel = svgRoot.select('.links-layer')
         .selectAll('.bbn-link')
@@ -1555,17 +1516,14 @@
       // Hit area (wider invisible line for easier hovering)
       linkEnter.append('line').attr('class', 'bbn-edge-hit')
         .attr('stroke', 'transparent').attr('stroke-width', 14);
-      // Confidence bar
-      linkEnter.append('rect').attr('class', 'bbn-bar-conf')
-        .attr('height', 3).attr('rx', 1);
 
       const linkMerge = linkEnter.merge(linkSel);
 
       linkMerge.select('.bbn-edge-line')
-        .attr('marker-end', d => `url(#arrow-${d.belief.predicate})`)
-        .attr('stroke', d => nodeColor(d.belief.predicate))
-        .attr('stroke-width', d => 1 + d.belief.confidence * 3.5)
-        .attr('stroke-opacity', d => d.belief.status === 'refuted' ? 0.15 : 0.3 + d.belief.confidence * 0.7)
+        .attr('marker-end', 'url(#arrow)')
+        .attr('stroke', EDGE_COLOR)
+        .attr('stroke-width', d => 1 + d.belief.confidence * 1.5)
+        .attr('stroke-opacity', d => d.belief.status === 'refuted' ? 0.12 : 0.25 + d.belief.confidence * 0.45)
         .attr('stroke-dasharray', d => d.belief.status === 'refuted' ? '4,4' : null)
         .attr('fill', 'none');
 
@@ -1585,8 +1543,8 @@
 
       const labelMerge = labelEnter.merge(labelSel);
       labelMerge
-        .attr('fill', d => nodeColor(d.belief.predicate))
-        .attr('opacity', d => d.belief.status === 'refuted' ? 0.3 : 0.75)
+        .attr('fill', '#99a')
+        .attr('opacity', d => d.belief.status === 'refuted' ? 0.3 : 0.7)
         .text(d => d.belief.predicate);
 
       labelSel.exit().remove();
@@ -1668,17 +1626,6 @@
 
         g.select('.bbn-edge-line').attr('x1', x1).attr('y1', y1).attr('x2', x2).attr('y2', y2);
         g.select('.bbn-edge-hit').attr('x1', x1).attr('y1', y1).attr('x2', x2).attr('y2', y2);
-
-        // Confidence bar at midpoint
-        const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-        const BAR_W = 24;
-        const confW = Math.max(1, d.belief.confidence * BAR_W);
-        const predColor = nodeColor(d.belief.predicate);
-
-        g.select('.bbn-bar-conf')
-          .attr('x', mx - BAR_W / 2).attr('y', my - 3)
-          .attr('width', confW)
-          .attr('fill', predColor).attr('opacity', 0.85);
       });
 
       // Edge labels
@@ -1763,14 +1710,11 @@
 
           g.select('.bbn-edge-line')
             .attr('stroke-opacity', isActive
-              ? (d.belief.status === 'refuted' ? 0.2 : 0.4 + d.belief.confidence * 0.6)
-              : (activeId ? 0.06 : (d.belief.status === 'refuted' ? 0.15 : 0.3 + d.belief.confidence * 0.7)))
+              ? (d.belief.status === 'refuted' ? 0.2 : 0.4 + d.belief.confidence * 0.4)
+              : (activeId ? 0.06 : (d.belief.status === 'refuted' ? 0.12 : 0.25 + d.belief.confidence * 0.45)))
             .attr('stroke-width', isActive && activeId
-              ? 2 + d.belief.confidence * 4
-              : 1 + d.belief.confidence * 3.5);
-
-          g.select('.bbn-bar-conf')
-            .attr('opacity', isActive ? 0.9 : (activeId ? 0.1 : 0.7));
+              ? 1.5 + d.belief.confidence * 2
+              : 1 + d.belief.confidence * 1.5);
         });
 
       // Edge labels
@@ -1829,31 +1773,11 @@
     function showTooltip(d) {
       const tooltip = document.getElementById('bbn-tooltip');
       const b = d.belief;
-      const predColor = nodeColor(b.predicate);
-      const subColor = nodeColor(b.subject);
-      const objColor = nodeColor(b.object);
-
-      function bar(val, color) {
-        const pct = Math.round(val * 100);
-        return `<div class="tt-bar-track">
-          <div class="tt-bar-fill" style="width:${pct}%;background:${color}"></div>
-        </div>`;
-      }
 
       tooltip.innerHTML = `
-        <div class="tt-title">${escapeHtml(b.id)}</div>
-        <div class="tt-rule">
-          <span style="color:${subColor}">${escapeHtml(b.subject)}</span>
-          <span style="color:${predColor}"> &rarr; ${escapeHtml(b.predicate)} &rarr; </span>
-          <span style="color:${objColor}">${escapeHtml(b.object)}</span>
-        </div>
-        <div class="tt-bar-row">
-          <span class="tt-bar-label">Confidence</span>
-          ${bar(b.confidence, predColor)}
-          <span class="tt-bar-val">${Math.round(b.confidence * 100)}%</span>
-        </div>
+        <div class="tt-title">${escapeHtml(b.subject)} &rarr; ${escapeHtml(b.predicate)} &rarr; ${escapeHtml(b.object)}</div>
         <div class="tt-meta">
-          +${b.supports} / -${b.contradicts} &middot; ${b.status}
+          ${Math.round(b.confidence * 100)}% &middot; +${b.supports} / -${b.contradicts} &middot; ${b.status}
         </div>
       `;
       tooltip.style.display = 'block';
@@ -2142,7 +2066,7 @@
       tab.lastState = state;
 
       document.getElementById('stat-frames').textContent = state.total_frames_observed;
-      document.getElementById('stat-loop').textContent = state.loop_iteration;
+      document.getElementById('stat-loop').textContent = state.verdict_count;
       document.getElementById('stat-beliefs').textContent = state.beliefs.length;
 
       if (state.status) {
@@ -2150,7 +2074,7 @@
       }
 
       if (state.beliefs.length !== tab.prevBeliefCount) {
-        addLog(`Beliefs updated: ${state.beliefs.length} total (loop #${state.loop_iteration})`, 'log-agent');
+        addLog(`Beliefs updated: ${state.beliefs.length} total (${state.verdict_count} verdicts)`, 'log-agent');
         tab.prevBeliefCount = state.beliefs.length;
       }
 

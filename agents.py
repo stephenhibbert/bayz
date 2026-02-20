@@ -150,48 +150,36 @@ scientist_agent = Agent(
     history_processors=[_cap_images],
     model_settings={"temperature": 0.8},
     system_prompt="""\
-You are an autonomous scientific observer placed in front of a live simulation
-that you know nothing about. Your mission: figure out the rules purely through
-observation.
+You are an autonomous scientific observer watching a live visual feed you know
+nothing about. Your mission: discover the rules governing what you see, purely
+through observation and reasoning.
 
-Use your tools in this cycle:
-1. get_frames — capture frames to watch what is happening. Vary your sampling
-   strategy: try 2 frames with a long delay (3-5s) to see large-scale motion,
-   or 6-8 rapid frames (0.3s) to catch fast interactions. Don't always use the
-   same number and interval.
-2. record_observation — name and save a bundle of frames, listing the entities
-   you can see. IMPORTANT: reuse entity names from the known entity list to
-   avoid synonyms (e.g. always use "red" not "crimson" if "red" already exists)
-3. propose_hypothesis — propose an interaction rule between two entity types,
-   citing the observations that support it
-4. judge_belief — for each existing hypothesis, say whether new observations
-   support (+), contradict (-), or are neutral to it. Give a brief reason.
-5. get_current_beliefs — review your hypotheses and their confidence scores
+Cycle:
+1. get_frames — capture frames. Vary your strategy each time: quick burst
+   (6-8 frames, 0.3s) to catch fast events, slow sweep (2-3 frames, 3-5s) to
+   see large-scale patterns, or medium pace (4-5 frames, 1s) for general
+   observation. Don't repeat the same sampling.
+2. record_observation — name and save what you saw, listing entities present.
+   IMPORTANT: reuse entity names from the known list to avoid synonyms.
+3. propose_hypothesis — propose a rule between two entity types, citing
+   supporting observations. Hypothesise early and boldly — even speculative
+   guesses. Wrong hypotheses get corrected; missing ones never do.
+4. judge_belief — for each existing hypothesis, give a verdict on new evidence:
+   supports (+), contradicts (-), or neutral (~). Be strict (see below).
+5. get_current_beliefs — review hypotheses and confidence scores.
 
-IMPORTANT GUIDELINES:
+Judging rules:
+- "supports" = the observation CLEARLY shows the described behaviour.
+  Proximity alone is not enough — you need directional motion or an event.
+- "neutral" = you cannot clearly see the behaviour. This is the DEFAULT.
+  Most observations are only relevant to a few hypotheses.
+- "contradicts" = the observation shows behaviour INCONSISTENT with the
+  hypothesis. Don't be afraid to contradict.
 
-Hypothesise early and boldly. After your first 1-2 observations, propose
-hypotheses for every entity pair — even speculative ones. It is BETTER to
-propose a wrong hypothesis and later contradict it than to wait for certainty.
-The system is designed for beliefs to be revised.
+After judging, check what is MISSING. Are there entity pairs with no
+hypothesis? Behaviours you haven't tested? Propose hypotheses to fill gaps.
 
-Be a strict judge. When judging beliefs against new evidence:
-- "supports" means the observation CLEARLY and DIRECTLY shows the behaviour.
-  Mere proximity or co-occurrence is not enough — you need to see motion toward,
-  motion away, or an interaction event.
-- "neutral" is the RIGHT verdict when you cannot clearly see the behaviour in
-  the observation. Use it often — most observations are only relevant to a few
-  hypotheses. Default to neutral unless the evidence is clear.
-- "contradicts" means the observation shows behaviour INCONSISTENT with the
-  hypothesis — e.g. entities that should attract are moving apart, or entities
-  that should repel are clustering together. Don't be afraid to contradict.
-
-Think about what is MISSING from your beliefs. After judging, check: are there
-entity pairs with no hypothesis? Are there behaviours you haven't tested for
-(repulsion, fleeing, ignoring)? Propose hypotheses to fill the gaps.
-
-When you are confident you understand the key rules, return a concise summary
-of your conclusions.""",
+When confident, return a concise summary of your conclusions.""",
 )
 
 
@@ -302,7 +290,7 @@ async def propose_hypothesis(
     Args:
         hypothesis_id: Unique slug for this hypothesis, e.g. 'red-chases-cyan'.
         subject: The entity type performing the action.
-        predicate: The interaction type (e.g. chases, flees, attracts, ignores, feeds_on).
+        predicate: The interaction type (e.g. chases, flees, attracts, repels, ignores).
         target: The entity type being acted upon.
         description: Plain English statement of the rule.
         observation_ids: IDs of stored observations that support this proposal.
@@ -339,13 +327,6 @@ async def propose_hypothesis(
     })
 
     belief = Belief(hypothesis=hyp)
-    belief.history.append(BeliefSnapshot(
-        iteration=ctx.deps.world_state.loop_iteration,
-        verdict="neutral",
-        reasoning="Initial proposal — awaiting evidence.",
-        observation_ids=list(observation_ids),
-    ))
-
     ctx.deps.world_state.upsert_belief(belief)
     ctx.deps.push_state_cb()
     ctx.deps.save_checkpoint_cb()
@@ -400,10 +381,10 @@ async def judge_belief(
     belief.last_updated = time.time()
     belief.update_status()
 
-    ctx.deps.world_state.loop_iteration += 1
+    ctx.deps.world_state.verdict_count += 1
 
     belief.history.append(BeliefSnapshot(
-        iteration=ctx.deps.world_state.loop_iteration,
+        iteration=ctx.deps.world_state.verdict_count,
         verdict=verdict,
         reasoning=reasoning,
         observation_ids=list(observation_ids),

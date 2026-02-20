@@ -28,7 +28,7 @@ class Hypothesis(BaseModel):
     id: str = Field(description="Unique slug, e.g. 'pred-chases-wanderer'")
     subject: str = Field(description="The acting entity kind")
     predicate: str = Field(
-        description="The interaction type: chases|flees|attracts|ignores|feeds_on"
+        description="The interaction type, e.g. chases, flees, attracts, ignores"
     )
     object_: str = Field(description="The entity kind being acted upon", alias="object")
     description: str = Field(description="Plain English rule statement")
@@ -85,7 +85,7 @@ class WorldState(BaseModel):
     beliefs: list[Belief] = Field(default_factory=list)
     observations: list[Observation] = Field(default_factory=list)
     entities: list[str] = Field(default_factory=list)
-    loop_iteration: int = 0
+    verdict_count: int = 0
     total_frames_observed: int = 0
 
     def get_belief(self, hypothesis_id: str) -> Belief | None:
@@ -113,7 +113,7 @@ class WorldState(BaseModel):
     def as_summary_dict(self) -> dict:
         """Serializable snapshot for WebSocket broadcast."""
         return {
-            "loop_iteration": self.loop_iteration,
+            "verdict_count": self.verdict_count,
             "total_frames_observed": self.total_frames_observed,
             "entities": self.entities,
             "observations": {

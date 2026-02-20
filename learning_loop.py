@@ -99,7 +99,7 @@ class LearningLoop:
             "Checkpoint saved: %s (%d beliefs, iter %d)",
             path.name,
             len(self.world_state.beliefs),
-            self.world_state.loop_iteration,
+            self.world_state.verdict_count,
         )
 
     def load_checkpoint(self) -> bool:
@@ -114,7 +114,7 @@ class LearningLoop:
                 "Checkpoint loaded: %s (%d beliefs, iter %d)",
                 path.name,
                 len(self.world_state.beliefs),
-                self.world_state.loop_iteration,
+                self.world_state.verdict_count,
             )
             return True
         except Exception:

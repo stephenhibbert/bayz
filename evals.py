@@ -22,8 +22,8 @@ log = logging.getLogger(__name__)
 
 MODEL = "anthropic:claude-sonnet-4-5-20250929"
 
-# How many belief-update iterations to wait for before evaluating
-DEFAULT_TARGET_ITERATIONS = 3
+# How many verdicts to wait for before evaluating
+DEFAULT_TARGET_VERDICTS = 3
 
 
 def format_beliefs_for_eval(world_state: WorldState) -> str:
@@ -32,7 +32,7 @@ def format_beliefs_for_eval(world_state: WorldState) -> str:
         return "No beliefs were formed. The system failed to generate any hypotheses."
 
     lines = [
-        f"After {world_state.loop_iteration} learning cycles "
+        f"After {world_state.verdict_count} verdicts "
         f"({world_state.total_frames_observed} frames observed), "
         f"the system holds {len(world_state.beliefs)} beliefs:\n"
     ]
@@ -121,10 +121,10 @@ async def evaluate_assertions(
 
 
 async def run_scenario_task(scenario: ScenarioConfig) -> str:
-    """Run the learning loop for N iterations and return belief summary."""
-    target = DEFAULT_TARGET_ITERATIONS
+    """Run the learning loop until N verdicts are recorded, then return belief summary."""
+    target = DEFAULT_TARGET_VERDICTS
     log.info(
-        "Starting eval for scenario '%s' (target: %d iterations)",
+        "Starting eval for scenario '%s' (target: %d verdicts)",
         scenario.id,
         target,
     )
@@ -135,7 +135,7 @@ async def run_scenario_task(scenario: ScenarioConfig) -> str:
     try:
         timeout = 300  # 5 minute max per scenario
         start = asyncio.get_event_loop().time()
-        while loop.world_state.loop_iteration < target:
+        while loop.world_state.verdict_count < target:
             if asyncio.get_event_loop().time() - start > timeout:
                 log.warning("Timeout reached for scenario %s", scenario.id)
                 break
@@ -207,5 +207,5 @@ if __name__ == "__main__":
     logfire.instrument_pydantic_ai()
 
     if len(sys.argv) > 1:
-        DEFAULT_TARGET_ITERATIONS = int(sys.argv[1])
+        DEFAULT_TARGET_VERDICTS = int(sys.argv[1])
     asyncio.run(run_evals())

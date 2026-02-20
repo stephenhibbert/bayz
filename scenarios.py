@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -36,23 +36,6 @@ class ScenarioConfig:
     rules: list[InteractionRule]
     assertions: list[str]  # Binary ground-truth assertions for evaluation
 
-    def entity_kinds(self) -> list[str]:
-        return [t.kind for t in self.entity_types]
-
-    def get_entity_type(self, kind: str) -> EntityTypeDef | None:
-        return next((t for t in self.entity_types if t.kind == kind), None)
-
-    def color_guide(self) -> str:
-        lines = []
-        for t in self.entity_types:
-            r, g, b = t.color
-            extra = ""
-            if t.stationary:
-                extra = " (stationary)"
-            if t.special_render == "pulsing_ring":
-                extra += " (pulsing ring)"
-            lines.append(f"- {t.kind}: RGB({r},{g},{b}), {t.count} of them{extra}")
-        return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
