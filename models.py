@@ -110,6 +110,28 @@ class WorldState(BaseModel):
         if name not in self.entities:
             self.entities.append(name)
 
+    def pair_coverage(self) -> dict:
+        """Compute which entity pairs have hypotheses and which don't.
+
+        Returns dict with:
+            covered: list of (subject, object, hypothesis_id)
+            uncovered: list of (entity_a, entity_b) for pairs with no hypothesis
+        """
+        covered_pairs: set[tuple[str, str]] = set()
+        covered: list[tuple[str, str, str]] = []
+        for b in self.beliefs:
+            pair = (b.hypothesis.subject, b.hypothesis.object_)
+            covered_pairs.add(pair)
+            covered.append((b.hypothesis.subject, b.hypothesis.object_, b.hypothesis.id))
+
+        uncovered: list[tuple[str, str]] = []
+        for i, a in enumerate(self.entities):
+            for b_ent in self.entities[i + 1:]:
+                if (a, b_ent) not in covered_pairs and (b_ent, a) not in covered_pairs:
+                    uncovered.append((a, b_ent))
+
+        return {"covered": covered, "uncovered": uncovered}
+
     def as_summary_dict(self) -> dict:
         """Serializable snapshot for WebSocket broadcast."""
         return {

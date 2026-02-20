@@ -161,12 +161,20 @@ Cycle:
    observation. Don't repeat the same sampling.
 2. record_observation — name and save what you saw, listing entities present.
    IMPORTANT: reuse entity names from the known list to avoid synonyms.
-3. propose_hypothesis — propose a rule between two entity types, citing
-   supporting observations. Hypothesise early and boldly — even speculative
-   guesses. Wrong hypotheses get corrected; missing ones never do.
-4. judge_belief — for each existing hypothesis, give a verdict on new evidence:
-   supports (+), contradicts (-), or neutral (~). Be strict (see below).
-5. get_current_beliefs — review hypotheses and confidence scores.
+3. propose_hypothesis — propose rules between entity types, citing supporting
+   observations. Hypothesise early and boldly — even speculative guesses.
+   Wrong hypotheses get corrected; missing ones never do.
+   - Propose MULTIPLE hypotheses per cycle when you see ambiguous behaviour.
+   - For the same entity pair, propose COMPETING hypotheses (e.g. "red chases
+     cyan" AND "red is attracted to yellow near cyan") so evidence can
+     differentiate them.
+   - Prioritise entity pairs with no existing hypothesis (check get_current_beliefs).
+4. judge_belief / batch_judge — After recording an observation, judge EVERY
+   existing hypothesis that involves the entities you just observed. Use
+   batch_judge to update multiple beliefs at once. This is correct Bayesian
+   updating: one observation updates all relevant posteriors simultaneously.
+5. get_current_beliefs — review hypotheses, confidence scores, and exploration
+   guidance showing which pairs need more evidence.
 
 Judging rules:
 - "supports" = the observation CLEARLY shows the described behaviour.
@@ -175,6 +183,26 @@ Judging rules:
   Most observations are only relevant to a few hypotheses.
 - "contradicts" = the observation shows behaviour INCONSISTENT with the
   hypothesis. Don't be afraid to contradict.
+
+Default prior — "no interaction":
+- Assume entity pairs DO NOT interact unless you see clear evidence otherwise.
+- NEVER propose "X ignores Y" hypotheses. "Ignores" is the default state, not
+  a discovery. Only propose hypotheses for ACTIVE interactions you observe:
+  chasing, fleeing, attracting, repelling, transforming, consuming, etc.
+- This saves your verdict budget for testing real interactions.
+
+Confound awareness:
+- When multiple entities move in the same direction, consider whether there is
+  a shared cause (e.g. an attractor pulling both) versus a direct pairwise
+  interaction (e.g. one chasing the other).
+- To disentangle: look for moments when the potential confounder is far away
+  or absent. If entity A still approaches entity B when the suspected attractor
+  is distant, that is evidence for A-chases-B independent of the attractor.
+- Also look at RELATIVE motion between two entities, not just absolute
+  direction. If A closes the gap on B while both drift toward C, A may be
+  chasing B ON TOP OF a shared attraction to C.
+- Propose competing hypotheses for ambiguous observations and let evidence
+  differentiate them over time.
 
 After judging, check what is MISSING. Are there entity pairs with no
 hypothesis? Behaviours you haven't tested? Propose hypotheses to fill gaps.
@@ -300,6 +328,14 @@ async def propose_hypothesis(
     if ctx.deps.stop_event.is_set():
         raise RuntimeError("Agent stopped")
 
+    # Reject "ignores" hypotheses — non-interaction is the default prior
+    if predicate.lower() in ("ignores", "no_interaction", "does_not_interact", "no interaction"):
+        return (
+            "No need to propose 'ignores' hypotheses — non-interaction is the "
+            "default assumption. Only propose hypotheses for active interactions "
+            "you observe (chases, flees, attracts, repels, transforms, etc.)."
+        )
+
     # Reject exact ID duplicates
     if ctx.deps.world_state.get_belief(hypothesis_id):
         return f"Hypothesis '{hypothesis_id}' already exists. Use judge_belief to update it."
@@ -406,6 +442,74 @@ async def judge_belief(
 
 
 @scientist_agent.tool
+async def batch_judge(
+    ctx: RunContext[AgentDeps],
+    judgments: list[dict],
+) -> str:
+    """Judge multiple hypotheses at once against the same observation(s).
+
+    Call this after recording an observation to update ALL relevant beliefs
+    in one step. This is correct Bayesian updating: one piece of evidence
+    updates every posterior it touches.
+
+    Args:
+        judgments: List of dicts, each with keys:
+            - hypothesis_id: str
+            - verdict: "supports" | "contradicts" | "neutral"
+            - reasoning: str
+            - observation_ids: list[str]
+    """
+    await ctx.deps.paused_event.wait()
+    if ctx.deps.stop_event.is_set():
+        raise RuntimeError("Agent stopped")
+
+    results = []
+    for j in judgments:
+        hypothesis_id = j.get("hypothesis_id", "")
+        verdict = j.get("verdict", "")
+        reasoning = j.get("reasoning", "")
+        observation_ids = j.get("observation_ids", [])
+
+        belief = ctx.deps.world_state.get_belief(hypothesis_id)
+        if not belief:
+            results.append(f"  [{hypothesis_id}] NOT FOUND — skipped")
+            continue
+
+        if verdict not in ("supports", "contradicts", "neutral"):
+            results.append(f"  [{hypothesis_id}] INVALID verdict '{verdict}' — skipped")
+            continue
+
+        if verdict == "supports":
+            belief.supports += 1
+        elif verdict == "contradicts":
+            belief.contradicts += 1
+
+        belief.last_updated = time.time()
+        belief.update_status()
+        ctx.deps.world_state.verdict_count += 1
+
+        belief.history.append(BeliefSnapshot(
+            iteration=ctx.deps.world_state.verdict_count,
+            verdict=verdict,
+            reasoning=reasoning,
+            observation_ids=list(observation_ids),
+        ))
+
+        ctx.deps.world_state.upsert_belief(belief)
+
+        symbol = {"supports": "+", "contradicts": "-", "neutral": "~"}[verdict]
+        results.append(
+            f"  [{hypothesis_id}] [{symbol}] confidence={belief.confidence:.0%}, "
+            f"+{belief.supports}/-{belief.contradicts}, status={belief.status}"
+        )
+
+    ctx.deps.push_state_cb()
+    ctx.deps.save_checkpoint_cb()
+
+    return f"Batch judged {len(results)} beliefs:\n" + "\n".join(results)
+
+
+@scientist_agent.tool
 async def get_current_beliefs(ctx: RunContext[AgentDeps]) -> str:
     """Review all current hypotheses, their verdicts, and confidence scores.
 
@@ -427,10 +531,43 @@ async def get_current_beliefs(ctx: RunContext[AgentDeps]) -> str:
 
     lines.append(f"Current beliefs ({len(beliefs)} total, sorted by confidence):")
     for b in sorted(beliefs, key=lambda b: b.confidence, reverse=True):
+        total_verdicts = b.supports + b.contradicts
         lines.append(
             f"  [{b.hypothesis.id}] {b.hypothesis.subject} {b.hypothesis.predicate} "
             f"{b.hypothesis.object_}: \"{b.hypothesis.description}\" "
             f"(confidence={b.confidence:.0%}, +{b.supports}/-{b.contradicts}, "
-            f"status={b.status})"
+            f"status={b.status}, verdicts={total_verdicts})"
         )
+
+    # -- Exploration guidance --
+    lines.append("")
+    lines.append("=== EXPLORATION GUIDANCE ===")
+
+    # Most uncertain beliefs (near 50% confidence or low evidence)
+    uncertain = sorted(
+        beliefs,
+        key=lambda b: abs(b.confidence - 0.5) + 0.1 * (b.supports + b.contradicts),
+    )
+    if uncertain:
+        lines.append("Most uncertain (test these next):")
+        for b in uncertain[:3]:
+            lines.append(
+                f"  -> [{b.hypothesis.id}] {b.hypothesis.subject} "
+                f"{b.hypothesis.predicate} {b.hypothesis.object_} "
+                f"(confidence={b.confidence:.0%}, verdicts={b.supports + b.contradicts})"
+            )
+
+    # Entity pairs with no hypothesis
+    coverage = ws.pair_coverage()
+    if coverage["uncovered"]:
+        lines.append(f"Entity pairs with NO hypothesis ({len(coverage['uncovered'])}):")
+        for subj, obj in coverage["uncovered"][:6]:
+            lines.append(f"  -> {subj} <-> {obj}: no hypothesis yet — observe these together")
+
+    lines.append("")
+    lines.append(
+        "STRATEGY: Design your next get_frames call to observe the most uncertain "
+        "beliefs or uncovered pairs above. Focus on pairs you haven't tested."
+    )
+
     return "\n".join(lines)
